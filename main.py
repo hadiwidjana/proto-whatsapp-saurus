@@ -24,17 +24,17 @@ logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv('WHATSAPP_VERIFY_TOKEN')
 APP_SECRET = os.getenv('WHATSAPP_APP_SECRET', '')
 
-def verify_signature(payload_body, signature):
-    if not APP_SECRET:
-        return True
-
-    expected_signature = hmac.new(
-        APP_SECRET.encode('utf-8'),
-        payload_body,
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(f"sha256={expected_signature}", signature)
+# def verify_signature(payload_body, signature):
+#     if not APP_SECRET:
+#         return True
+#
+#     expected_signature = hmac.new(
+#         APP_SECRET.encode('utf-8'),
+#         payload_body,
+#         hashlib.sha256
+#     ).hexdigest()
+#
+#     return hmac.compare_digest(f"sha256={expected_signature}", signature)
 
 @app.route('/', methods=['GET'])
 def webhook_verify():
@@ -51,12 +51,12 @@ def webhook_verify():
 @app.route('/', methods=['POST'])
 def webhook_receive():
     try:
-        signature = request.headers.get('X-Hub-Signature-256', '')
-        payload = request.get_data()
+        # signature = request.headers.get('X-Hub-Signature-256', '')
+        # payload = request.get_data()
 
-        if APP_SECRET and not verify_signature(payload, signature):
-            logger.warning("Invalid signature in webhook request")
-            return '', 401
+        # if APP_SECRET and not verify_signature(payload, signature):
+        #     logger.warning("Invalid signature in webhook request")
+        #     return '', 401
 
         data = request.get_json()
 
