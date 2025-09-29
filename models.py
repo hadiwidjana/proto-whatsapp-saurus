@@ -6,9 +6,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 class WhatsAppMessage:
-    def __init__(self, wa_id, message_id, from_number, timestamp, message_type,
+    def __init__(self, entry_id, wa_id, message_id, from_number, timestamp, message_type,
                  message_content, contact_name=None, phone_number_id=None,
                  display_phone_number=None, raw_webhook_data=None):
+        self.entry_id = entry_id
         self.wa_id = wa_id
         self.message_id = message_id
         self.from_number = from_number
@@ -23,7 +24,8 @@ class WhatsAppMessage:
 
     def to_dict(self):
         return {
-            "_id": self.wa_id,
+            "_id": self.entry_id,
+            "wa_id": self.wa_id,
             "message_id": self.message_id,
             "from_number": self.from_number,
             "timestamp": self.timestamp,
@@ -72,6 +74,7 @@ class Database:
                                 contact_name = contacts[0].get('profile', {}).get('name')
 
                             wa_message = WhatsAppMessage(
+                                entry_id=message.get('id'),
                                 wa_id=message.get('from'),
                                 message_id=message.get('id'),
                                 from_number=message.get('from'),
@@ -85,7 +88,7 @@ class Database:
                             )
 
                             self.collection.replace_one(
-                                {"_id": wa_message.wa_id},
+                                {"_id": wa_message.entry_id},
                                 wa_message.to_dict(),
                                 upsert=True
                             )
