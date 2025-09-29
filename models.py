@@ -74,7 +74,7 @@ class Database:
                                 contact_name = contacts[0].get('profile', {}).get('name')
 
                             wa_message = WhatsAppMessage(
-                                entry_id=message.get('id'),
+                                entry_id=entry.get('id'),
                                 wa_id=message.get('from'),
                                 message_id=message.get('id'),
                                 from_number=message.get('from'),
