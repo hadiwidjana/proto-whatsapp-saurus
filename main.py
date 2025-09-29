@@ -1,11 +1,10 @@
 from flask import Flask, request, jsonify
 import logging
-import hashlib
-import hmac
 import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+from models import Database
 
 load_dotenv()
 
@@ -23,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 VERIFY_TOKEN = os.getenv('WHATSAPP_VERIFY_TOKEN')
 APP_SECRET = os.getenv('WHATSAPP_APP_SECRET', '')
+
+# Initialize database
+try:
+    db = Database()
+    logger.info("Database connection established")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {str(e)}")
+    db = None
 
 # def verify_signature(payload_body, signature):
 #     if not APP_SECRET:
@@ -68,6 +75,14 @@ def webhook_receive():
         logger.info(f"\n\nWebhook received {timestamp}\n")
         logger.info(json.dumps(data, indent=2))
 
+        # Store message data in database
+        if db and data.get('object') == 'whatsapp_business_account':
+            try:
+                db.save_message(data)
+                logger.info("Message successfully stored in database")
+            except Exception as db_error:
+                logger.error(f"Failed to store message in database: {str(db_error)}")
+
         return '', 200
 
     except Exception as e:
@@ -97,9 +112,14 @@ if __name__ == '__main__':
         logger.error("WHATSAPP_VERIFY_TOKEN environment variable not set")
         exit(1)
 
+    if not os.getenv('MONGODB_URI'):
+        logger.error("MONGODB_URI environment variable not set")
+        exit(1)
+
     logger.info("Starting WhatsApp webhook server...")
     logger.info(f"Verify token configured: Yes")
     logger.info(f"App secret configured: {'Yes' if APP_SECRET else 'No'}")
+    logger.info(f"Database configured: {'Yes' if db else 'No'}")
     logger.info(f"Listening on port {port}")
 
     app.run(host='0.0.0.0', port=port, debug=False)
