@@ -65,8 +65,8 @@ def webhook_receive():
             return '', 400
 
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"\n\nWebhook received {timestamp}\n")
-        print(json.dumps(data, indent=2))
+        logger.info(f"\n\nWebhook received {timestamp}\n")
+        logger.info(json.dumps(data, indent=2))
 
         return '', 200
 
