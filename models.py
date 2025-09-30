@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 class WhatsAppMessage:
     def __init__(self, entry_id, wa_id, message_id, from_number, timestamp, message_type,
-                 message_content, contact_name=None, phone_number_id=None,
+                 message_content, message_direction="RECEIVED", contact_name=None, phone_number_id=None,
                  display_phone_number=None, raw_webhook_data=None):
         self.entry_id = entry_id
         self.wa_id = wa_id
@@ -16,6 +16,7 @@ class WhatsAppMessage:
         self.timestamp = timestamp
         self.message_type = message_type
         self.message_content = message_content
+        self.message_direction = message_direction
         self.contact_name = contact_name
         self.phone_number_id = phone_number_id
         self.display_phone_number = display_phone_number
@@ -31,6 +32,7 @@ class WhatsAppMessage:
             "timestamp": self.timestamp,
             "message_type": self.message_type,
             "message_content": self.message_content,
+            "message_direction": self.message_direction,
             "contact_name": self.contact_name,
             "phone_number_id": self.phone_number_id,
             "display_phone_number": self.display_phone_number,
@@ -45,7 +47,10 @@ class Database:
             raise ValueError("MONGODB_URI environment variable not set")
 
         self.client = MongoClient(self.mongo_uri)
-        self.db = self.client.get_default_database()
+
+        # Extract database name from URI or use default
+        db_name = os.getenv('MONGODB_DATABASE', 'whatsapp_saurus')
+        self.db = self.client[db_name]
         self.collection = self.db.whatsapp_messages
 
         self._create_indexes()
@@ -54,6 +59,7 @@ class Database:
         try:
             self.collection.create_index("message_id")
             self.collection.create_index("from_number")
+            self.collection.create_index("message_direction")
             self.collection.create_index("created_at")
         except Exception as e:
             logger.warning(f"Failed to create indexes: {str(e)}")
@@ -73,6 +79,10 @@ class Database:
                             if contacts:
                                 contact_name = contacts[0].get('profile', {}).get('name')
 
+                            business_phone = metadata.get('display_phone_number', '')
+                            message_from = message.get('from', '')
+                            message_direction = "SENT" if message_from == business_phone else "RECEIVED"
+
                             wa_message = WhatsAppMessage(
                                 entry_id=entry.get('id'),
                                 wa_id=message.get('from'),
@@ -81,6 +91,7 @@ class Database:
                                 timestamp=message.get('timestamp'),
                                 message_type=message.get('type'),
                                 message_content=message.get(message.get('type', 'text'), {}),
+                                message_direction=message_direction,
                                 contact_name=contact_name,
                                 phone_number_id=metadata.get('phone_number_id'),
                                 display_phone_number=metadata.get('display_phone_number'),
@@ -99,5 +110,5 @@ class Database:
             raise e
 
     def close(self):
-        if self.client:
+        if hasattr(self, 'client'):
             self.client.close()
