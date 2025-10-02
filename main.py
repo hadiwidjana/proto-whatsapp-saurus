@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 from models import Database
+from services import OpenAIService, WhatsAppAPIService, AutoReplyService
 
 load_dotenv()
 
@@ -30,6 +31,22 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize database: {str(e)}")
     db = None
+
+# Initialize services
+openai_service = None
+whatsapp_service = None
+auto_reply_service = None
+
+try:
+    if os.getenv('OPENAI_API_KEY') and os.getenv('WHATSAPP_ACCESS_TOKEN') and os.getenv('WHATSAPP_PHONE_NUMBER_ID'):
+        openai_service = OpenAIService()
+        whatsapp_service = WhatsAppAPIService()
+        auto_reply_service = AutoReplyService(db, openai_service, whatsapp_service)
+        logger.info("Auto-reply services initialized")
+    else:
+        logger.warning("Auto-reply services not initialized - missing required environment variables")
+except Exception as e:
+    logger.error(f"Failed to initialize auto-reply services: {str(e)}")
 
 # def verify_signature(payload_body, signature):
 #     if not APP_SECRET:
@@ -80,6 +97,14 @@ def webhook_receive():
             try:
                 db.save_message(data)
                 logger.info("Message successfully stored in database")
+
+                # Process auto-reply if services are available
+                if auto_reply_service:
+                    try:
+                        auto_reply_service.process_and_reply(data)
+                    except Exception as reply_error:
+                        logger.error(f"Auto-reply processing failed: {str(reply_error)}")
+
             except Exception as db_error:
                 logger.error(f"Failed to store message in database: {str(db_error)}")
 
