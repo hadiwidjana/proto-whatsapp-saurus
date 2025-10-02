@@ -80,6 +80,7 @@ class Database:
                                 contact_name = contacts[0].get('profile', {}).get('name')
 
                             business_phone = metadata.get('display_phone_number', '')
+                            phone_number_id = metadata.get('phone_number_id', '')
                             message_id = message.get('id')
                             message_from = message.get('from', '')
                             message_direction = "SENT" if message_from == business_phone else "RECEIVED"
@@ -88,9 +89,9 @@ class Database:
                             timestamp = message.get('timestamp', str(int(datetime.now(timezone.utc).timestamp())))
 
                             if message_direction == "RECEIVED":
-                                entry_id = f"received_{business_phone}_{timestamp}"
+                                entry_id = f"received_{phone_number_id}_{timestamp}"
                             else:
-                                entry_id = f"sent_{business_phone}_{timestamp}"
+                                entry_id = f"sent_{phone_number_id}_{timestamp}"
 
                             wa_message = WhatsAppMessage(
                                 entry_id=entry_id,
