@@ -83,12 +83,21 @@ class Database:
                             message_from = message.get('from', '')
                             message_direction = "SENT" if message_from == business_phone else "RECEIVED"
 
+                            # Generate new ID format based on message direction
+                            message_id = message.get('id', '')
+                            timestamp = message.get('timestamp', str(int(datetime.now(timezone.utc).timestamp())))
+
+                            if message_direction == "RECEIVED":
+                                entry_id = f"received_{message_id}_{timestamp}"
+                            else:
+                                entry_id = f"sent_{message_id}_{timestamp}"
+
                             wa_message = WhatsAppMessage(
-                                entry_id=entry.get('id'),
+                                entry_id=entry_id,
                                 wa_id=message.get('from'),
-                                message_id=message.get('id'),
+                                message_id=message_id,
                                 from_number=message.get('from'),
-                                timestamp=message.get('timestamp'),
+                                timestamp=timestamp,
                                 message_type=message.get('type'),
                                 message_content=message.get(message.get('type', 'text'), {}),
                                 message_direction=message_direction,

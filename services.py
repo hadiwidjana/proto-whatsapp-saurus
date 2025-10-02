@@ -77,12 +77,20 @@ class WhatsAppAPIService:
                         from models import WhatsAppMessage
                         import time
 
+                        # Get message ID from response or generate fallback
+                        response_data = response.json()
+                        api_message_id = response_data.get('messages', [{}])[0].get('id', f"api_{int(time.time())}")
+                        timestamp = str(int(time.time()))
+
+                        # Generate new ID format for sent messages
+                        entry_id = f"sent_{api_message_id}_{timestamp}"
+
                         sent_message = WhatsAppMessage(
-                            entry_id=f"sent_{int(time.time())}_{to_number}",
+                            entry_id=entry_id,
                             wa_id=phone_number_id,
-                            message_id=response.json().get('messages', [{}])[0].get('id', f"sent_{int(time.time())}"),
+                            message_id=api_message_id,
                             from_number=phone_number_id,
-                            timestamp=str(int(time.time())),
+                            timestamp=timestamp,
                             message_type="text",
                             message_content={"body": message_text},
                             message_direction="SENT",
