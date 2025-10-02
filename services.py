@@ -1,6 +1,7 @@
 import os
 import requests
 import logging
+from datetime import datetime
 from openai import OpenAI
 from typing import List, Dict, Optional
 
@@ -12,10 +13,17 @@ class OpenAIService:
 
     def generate_response(self, conversation_history: List[Dict], contact_name: Optional[str] = None) -> str:
         try:
+            current_time = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+
             messages = [
                 {
                     "role": "system",
-                    "content": "You are a helpful WhatsApp assistant. Keep responses concise and conversational. Respond in a friendly, helpful manner."
+                    "content": f"You are a helpful WhatsApp assistant. "
+                               f"Keep responses concise and conversational. "
+                               f"Respond in a friendly, helpful manner. "
+                               f"The current date and time is: {current_time}. "
+                               f"Use this information when relevant to provide time-aware responses. "
+                               f"You can respond in either English or Bahasa Indonesia - match the language the user is using or their apparent language preference."
                 }
             ]
 
