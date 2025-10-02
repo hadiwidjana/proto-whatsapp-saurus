@@ -112,3 +112,15 @@ class Database:
     def close(self):
         if hasattr(self, 'client'):
             self.client.close()
+
+    def get_conversation_history(self, from_number, limit=10):
+        try:
+            messages = self.collection.find(
+                {"from_number": from_number},
+                {"message_content": 1, "message_direction": 1, "timestamp": 1, "_id": 0}
+            ).sort("timestamp", -1).limit(limit)
+
+            return list(messages)
+        except Exception as e:
+            logger.error(f"Error retrieving conversation history: {str(e)}")
+            return []
