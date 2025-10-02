@@ -46,15 +46,15 @@ class OpenAIService:
 class WhatsAppAPIService:
     def __init__(self):
         self.access_token = os.getenv('WHATSAPP_ACCESS_TOKEN')
-        self.phone_number_id = os.getenv('WHATSAPP_PHONE_NUMBER_ID')
-        self.base_url = f"https://graph.facebook.com/v23.0/{self.phone_number_id}/messages"
 
-    def send_message(self, to_number: str, message_text: str, db=None) -> bool:
+    def send_message(self, to_number: str, message_text: str, phone_number_id: str, db=None) -> bool:
         try:
             headers = {
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {self.access_token}'
             }
+
+            base_url = f"https://graph.facebook.com/v23.0/{phone_number_id}/messages"
 
             payload = {
                 "messaging_product": "whatsapp",
@@ -67,12 +67,11 @@ class WhatsAppAPIService:
                 }
             }
 
-            response = requests.post(self.base_url, json=payload, headers=headers)
+            response = requests.post(base_url, json=payload, headers=headers)
 
             if response.status_code == 200:
                 logger.info(f"Message sent successfully to {to_number}")
 
-                # Store sent message in database
                 if db:
                     try:
                         from models import WhatsAppMessage
@@ -80,16 +79,16 @@ class WhatsAppAPIService:
 
                         sent_message = WhatsAppMessage(
                             entry_id=f"sent_{int(time.time())}_{to_number}",
-                            wa_id=self.phone_number_id,
+                            wa_id=phone_number_id,
                             message_id=response.json().get('messages', [{}])[0].get('id', f"sent_{int(time.time())}"),
-                            from_number=self.phone_number_id,
+                            from_number=phone_number_id,
                             timestamp=str(int(time.time())),
                             message_type="text",
                             message_content={"body": message_text},
                             message_direction="SENT",
                             contact_name=None,
-                            phone_number_id=self.phone_number_id,
-                            display_phone_number=self.phone_number_id,
+                            phone_number_id=phone_number_id,
+                            display_phone_number=phone_number_id,
                             raw_webhook_data={"sent_via_api": True, "to": to_number}
                         )
 
@@ -120,8 +119,14 @@ class AutoReplyService:
                 for change in entry.get('changes', []):
                     if change.get('field') == 'messages':
                         value = change.get('value', {})
+                        metadata = value.get('metadata', {})
                         messages = value.get('messages', [])
                         contacts = value.get('contacts', [])
+
+                        phone_number_id = metadata.get('phone_number_id')
+                        if not phone_number_id:
+                            logger.error("phone_number_id not found in webhook metadata")
+                            continue
 
                         for message in messages:
                             message_direction = self._determine_message_direction(message, value)
@@ -140,7 +145,7 @@ class AutoReplyService:
                                     contact_name
                                 )
 
-                                success = self.whatsapp_service.send_message(from_number, ai_response, self.db)
+                                success = self.whatsapp_service.send_message(from_number, ai_response, phone_number_id, self.db)
 
                                 if success:
                                     logger.info(f"Auto-reply sent to {from_number}: {ai_response}")

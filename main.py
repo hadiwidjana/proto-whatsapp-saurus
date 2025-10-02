@@ -38,7 +38,7 @@ whatsapp_service = None
 auto_reply_service = None
 
 try:
-    if os.getenv('OPENAI_API_KEY') and os.getenv('WHATSAPP_ACCESS_TOKEN') and os.getenv('WHATSAPP_PHONE_NUMBER_ID'):
+    if os.getenv('OPENAI_API_KEY') and os.getenv('WHATSAPP_ACCESS_TOKEN'):
         openai_service = OpenAIService()
         whatsapp_service = WhatsAppAPIService()
         auto_reply_service = AutoReplyService(db, openai_service, whatsapp_service)
