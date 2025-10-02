@@ -83,7 +83,7 @@ class WhatsAppAPIService:
                         timestamp = str(int(time.time()))
 
                         # Generate new ID format for sent messages
-                        entry_id = f"sent_{api_message_id}_{timestamp}"
+                        entry_id = f"sent_{phone_number_id}_{timestamp}"
 
                         sent_message = WhatsAppMessage(
                             entry_id=entry_id,

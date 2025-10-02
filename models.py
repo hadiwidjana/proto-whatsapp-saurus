@@ -80,17 +80,17 @@ class Database:
                                 contact_name = contacts[0].get('profile', {}).get('name')
 
                             business_phone = metadata.get('display_phone_number', '')
+                            message_id = message.get('id')
                             message_from = message.get('from', '')
                             message_direction = "SENT" if message_from == business_phone else "RECEIVED"
 
                             # Generate new ID format based on message direction
-                            message_id = message.get('id', '')
                             timestamp = message.get('timestamp', str(int(datetime.now(timezone.utc).timestamp())))
 
                             if message_direction == "RECEIVED":
-                                entry_id = f"received_{message_id}_{timestamp}"
+                                entry_id = f"received_{business_phone}_{timestamp}"
                             else:
-                                entry_id = f"sent_{message_id}_{timestamp}"
+                                entry_id = f"sent_{business_phone}_{timestamp}"
 
                             wa_message = WhatsAppMessage(
                                 entry_id=entry_id,
@@ -123,13 +123,16 @@ class Database:
             self.client.close()
 
     def get_conversation_history(self, from_number, limit=10):
+        logger.info(f"Retrieving conversation history for contact, limit: {limit}")
         try:
             messages = self.collection.find(
                 {"from_number": from_number},
                 {"message_content": 1, "message_direction": 1, "timestamp": 1, "_id": 0}
             ).sort("timestamp", -1).limit(limit)
 
-            return list(messages)
+            message_list = list(messages)
+            logger.info(f"Successfully retrieved {len(message_list)} messages from conversation history")
+            return message_list
         except Exception as e:
             logger.error(f"Error retrieving conversation history: {str(e)}")
             return []
