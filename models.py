@@ -161,8 +161,24 @@ class Database:
                     }
                 },
                 {
+                    "$addFields": {
+                        "customer_phone": {
+                            "$cond": {
+                                "if": {"$eq": ["$message_direction", "RECEIVED"]},
+                                "then": "$from_number",
+                                "else": "$wa_id"
+                            }
+                        }
+                    }
+                },
+                {
+                    "$match": {
+                        "customer_phone": {"$ne": None}
+                    }
+                },
+                {
                     "$group": {
-                        "_id": "$from_number",
+                        "_id": "$customer_phone",
                         "contact_name": {"$last": "$contact_name"},
                         "last_message_timestamp": {"$max": "$timestamp"},
                         "last_message_content": {"$last": "$message_content"},
@@ -201,11 +217,18 @@ class Database:
                     "$match": {
                         "phone_number_id": phone_number_id,
                         "$or": [
-                            {"from_number": customer_phone},
-                            {"$and": [
-                                {"message_direction": "SENT"},
-                                {"$expr": {"$ne": ["$from_number", "$display_phone_number"]}}
-                            ]}
+                            {
+                                "$and": [
+                                    {"message_direction": "RECEIVED"},
+                                    {"wa_id": customer_phone}
+                                ]
+                            },
+                            {
+                                "$and": [
+                                    {"message_direction": "SENT"},
+                                    {"wa_id": customer_phone}
+                                ]
+                            }
                         ]
                     }
                 },
@@ -240,11 +263,18 @@ class Database:
                     "$match": {
                         "phone_number_id": phone_number_id,
                         "$or": [
-                            {"from_number": customer_phone},
-                            {"$and": [
-                                {"message_direction": "SENT"},
-                                {"$expr": {"$ne": ["$from_number", "$display_phone_number"]}}
-                            ]}
+                            {
+                                "$and": [
+                                    {"message_direction": "RECEIVED"},
+                                    {"wa_id": customer_phone}
+                                ]
+                            },
+                            {
+                                "$and": [
+                                    {"message_direction": "SENT"},
+                                    {"wa_id": customer_phone}
+                                ]
+                            }
                         ]
                     }
                 },
