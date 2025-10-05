@@ -253,6 +253,9 @@ class Database:
                 },
                 {
                     "$limit": limit
+                },
+                {
+                    "$sort": {"timestamp": 1}
                 }
             ]
 
