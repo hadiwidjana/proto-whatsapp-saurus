@@ -55,7 +55,7 @@ class WhatsAppAPIService:
     def __init__(self):
         self.access_token = os.getenv('WHATSAPP_ACCESS_TOKEN')
 
-    def send_message(self, to_number: str, message_text: str, phone_number_id: str, db=None) -> bool:
+    def send_message(self, to_number: str, message_text: str, phone_number_id: str, display_phone_number: str, contact_name: str, db=None) -> bool:
         try:
             headers = {
                 'Content-Type': 'application/json',
@@ -88,6 +88,7 @@ class WhatsAppAPIService:
                         # Get message ID from response or generate fallback
                         response_data = response.json()
                         api_message_id = response_data.get('messages', [{}])[0].get('id', f"api_{int(time.time())}")
+                        wa_id = response_data.get('contacts', [{}])[0].get('wa_id')
                         timestamp = str(int(time.time()))
 
                         # Generate new ID format for sent messages
@@ -95,16 +96,16 @@ class WhatsAppAPIService:
 
                         sent_message = WhatsAppMessage(
                             entry_id=entry_id,
-                            wa_id=phone_number_id,
+                            wa_id=wa_id,
                             message_id=api_message_id,
-                            from_number=phone_number_id,
+                            from_number=display_phone_number,
                             timestamp=timestamp,
                             message_type="text",
                             message_content={"body": message_text},
                             message_direction="SENT",
-                            contact_name=None,
+                            contact_name=contact_name,
                             phone_number_id=phone_number_id,
-                            display_phone_number=phone_number_id,
+                            display_phone_number=display_phone_number,
                             raw_webhook_data={"sent_via_api": True, "to": to_number}
                         )
 
@@ -140,9 +141,8 @@ class AutoReplyService:
                         contacts = value.get('contacts', [])
 
                         phone_number_id = metadata.get('phone_number_id')
-                        if not phone_number_id:
-                            logger.error("phone_number_id not found in webhook metadata")
-                            continue
+                        display_phone_number = metadata.get('display_phone_number')
+
 
                         for message in messages:
                             message_direction = self._determine_message_direction(message, value)
@@ -161,7 +161,7 @@ class AutoReplyService:
                                     contact_name
                                 )
 
-                                success = self.whatsapp_service.send_message(from_number, ai_response, phone_number_id, self.db)
+                                success = self.whatsapp_service.send_message(from_number, ai_response, phone_number_id, display_phone_number, contact_name, self.db)
 
                                 if success:
                                     logger.info(f"Auto-reply sent to {from_number}: {ai_response}")

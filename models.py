@@ -80,8 +80,10 @@ class Database:
 
                         for message in messages:
                             contact_name = None
+                            wa_id = None
                             if contacts:
                                 contact_name = contacts[0].get('profile', {}).get('name')
+                                wa_id = contacts[0].get('wa_id')
 
                             business_phone = metadata.get('display_phone_number', '')
                             phone_number_id = metadata.get('phone_number_id', '')
@@ -99,7 +101,7 @@ class Database:
 
                             wa_message = WhatsAppMessage(
                                 entry_id=entry_id,
-                                wa_id=message.get('from'),
+                                wa_id=wa_id,
                                 message_id=message_id,
                                 from_number=message.get('from'),
                                 timestamp=timestamp,
