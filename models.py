@@ -2,6 +2,9 @@ from pymongo import MongoClient
 from datetime import datetime, timezone
 import os
 import logging
+import jwt
+from functools import wraps
+from flask import request, jsonify
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,7 @@ class Database:
         db_name = os.getenv('MONGODB_DATABASE', 'whatsapp_saurus')
         self.db = self.client[db_name]
         self.collection = self.db.whatsapp_messages
+        self.users_collection = self.db.users
 
         self._create_indexes()
 
@@ -137,3 +141,84 @@ class Database:
         except Exception as e:
             logger.error(f"Error retrieving conversation history: {str(e)}")
             return []
+
+    def get_user_by_email(self, email):
+        try:
+            user = self.users_collection.find_one({"email": email})
+            return user
+        except Exception as e:
+            logger.error(f"Error retrieving user by email: {str(e)}")
+            return None
+
+    def get_customers_by_phone_number_id(self, phone_number_id, limit=100):
+        try:
+            pipeline = [
+                {
+                    "$match": {
+                        "phone_number_id": phone_number_id,
+                        "message_direction": "RECEIVED"
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$from_number",
+                        "contact_name": {"$last": "$contact_name"},
+                        "last_message_timestamp": {"$max": "$timestamp"},
+                        "last_message_content": {"$last": "$message_content"},
+                        "message_count": {"$sum": 1}
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 0,
+                        "phone_number": "$_id",
+                        "contact_name": 1,
+                        "last_message_timestamp": 1,
+                        "last_message_content": 1,
+                        "message_count": 1
+                    }
+                },
+                {
+                    "$sort": {"last_message_timestamp": -1}
+                },
+                {
+                    "$limit": limit
+                }
+            ]
+
+            customers = list(self.collection.aggregate(pipeline))
+            logger.info(f"Retrieved {len(customers)} customers for phone_number_id: {phone_number_id}")
+            return customers
+        except Exception as e:
+            logger.error(f"Error retrieving customers: {str(e)}")
+            return []
+
+def verify_jwt_token(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = request.headers.get('Authorization')
+
+        if not token:
+            return jsonify({'error': 'Token is missing'}), 401
+
+        if token.startswith('Bearer '):
+            token = token[7:]
+
+        try:
+            decoded_token = jwt.decode(
+                token,
+                options={"verify_signature": False}
+            )
+
+            email = decoded_token.get('sub')
+            if not email:
+                return jsonify({'error': 'Invalid token format'}), 401
+
+            request.user_email = email
+
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated_function

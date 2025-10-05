@@ -4,7 +4,7 @@ import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-from models import Database
+from models import Database, verify_jwt_token
 from services import OpenAIService, WhatsAppAPIService, AutoReplyService
 
 load_dotenv()
@@ -129,6 +129,44 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return '', 500
+
+@app.route('/api/customers', methods=['GET'])
+@verify_jwt_token
+def get_customers():
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+
+        user_email = request.user_email
+        user = db.get_user_by_email(user_email)
+
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        if not user.get('is_whatsapp_connected'):
+            return jsonify({'error': 'WhatsApp not connected'}), 400
+
+        phone_number_id = user.get('whatsapp_phone_number_id')
+        if not phone_number_id:
+            return jsonify({'error': 'WhatsApp phone number not configured'}), 400
+
+        limit = request.args.get('limit', 100, type=int)
+        if limit > 1000:
+            limit = 1000
+
+        customers = db.get_customers_by_phone_number_id(phone_number_id, limit)
+
+        return jsonify({
+            'success': True,
+            'data': customers,
+            'count': len(customers),
+            'whatsapp_phone_number': user.get('whatsapp_phone_number'),
+            'phone_number_id': phone_number_id
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching customers: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
