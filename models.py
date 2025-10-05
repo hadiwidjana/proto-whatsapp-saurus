@@ -157,8 +157,7 @@ class Database:
             pipeline = [
                 {
                     "$match": {
-                        "phone_number_id": phone_number_id,
-                        "message_direction": "RECEIVED"
+                        "phone_number_id": phone_number_id
                     }
                 },
                 {
@@ -194,6 +193,88 @@ class Database:
         except Exception as e:
             logger.error(f"Error retrieving customers: {str(e)}")
             return []
+
+    def get_chat_history(self, phone_number_id, customer_phone, limit=50, offset=0):
+        try:
+            pipeline = [
+                {
+                    "$match": {
+                        "phone_number_id": phone_number_id,
+                        "$or": [
+                            {"from_number": customer_phone},
+                            {"$and": [
+                                {"message_direction": "SENT"},
+                                {"$expr": {"$ne": ["$from_number", "$display_phone_number"]}}
+                            ]}
+                        ]
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 0,
+                        "message_id": 1,
+                        "from_number": 1,
+                        "timestamp": 1,
+                        "message_type": 1,
+                        "message_content": 1,
+                        "message_direction": 1,
+                        "contact_name": 1,
+                        "created_at": 1
+                    }
+                },
+                {
+                    "$sort": {"timestamp": -1}
+                },
+                {
+                    "$skip": offset
+                },
+                {
+                    "$limit": limit
+                }
+            ]
+
+            messages = list(self.collection.aggregate(pipeline))
+
+            total_count_pipeline = [
+                {
+                    "$match": {
+                        "phone_number_id": phone_number_id,
+                        "$or": [
+                            {"from_number": customer_phone},
+                            {"$and": [
+                                {"message_direction": "SENT"},
+                                {"$expr": {"$ne": ["$from_number", "$display_phone_number"]}}
+                            ]}
+                        ]
+                    }
+                },
+                {
+                    "$count": "total"
+                }
+            ]
+
+            total_result = list(self.collection.aggregate(total_count_pipeline))
+            total_count = total_result[0]["total"] if total_result else 0
+
+            logger.info(f"Retrieved {len(messages)} messages (offset: {offset}, limit: {limit}) out of {total_count} total messages")
+
+            return {
+                "messages": messages,
+                "total_count": total_count,
+                "offset": offset,
+                "limit": limit,
+                "has_more": (offset + len(messages)) < total_count
+            }
+
+        except Exception as e:
+            logger.error(f"Error retrieving chat history: {str(e)}")
+            return {
+                "messages": [],
+                "total_count": 0,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False
+            }
 
 def verify_jwt_token(f):
     @wraps(f)

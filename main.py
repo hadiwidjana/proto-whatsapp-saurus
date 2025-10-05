@@ -168,6 +168,61 @@ def get_customers():
         logger.error(f"Error fetching customers: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/chat-history/<customer_phone>', methods=['GET'])
+@verify_jwt_token
+def get_chat_history(customer_phone):
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+
+        user_email = request.user_email
+        user = db.get_user_by_email(user_email)
+
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        if not user.get('is_whatsapp_connected'):
+            return jsonify({'error': 'WhatsApp not connected'}), 400
+
+        phone_number_id = user.get('whatsapp_phone_number_id')
+        if not phone_number_id:
+            return jsonify({'error': 'WhatsApp phone number not configured'}), 400
+
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+
+        if limit > 200:
+            limit = 200
+        if limit < 1:
+            limit = 1
+        if offset < 0:
+            offset = 0
+
+        if not customer_phone or len(customer_phone.strip()) == 0:
+            return jsonify({'error': 'Customer phone number is required'}), 400
+
+        chat_data = db.get_chat_history(phone_number_id, customer_phone, limit, offset)
+
+        return jsonify({
+            'success': True,
+            'data': chat_data['messages'],
+            'pagination': {
+                'total_count': chat_data['total_count'],
+                'offset': chat_data['offset'],
+                'limit': chat_data['limit'],
+                'has_more': chat_data['has_more'],
+                'current_page': (chat_data['offset'] // chat_data['limit']) + 1,
+                'total_pages': ((chat_data['total_count'] - 1) // chat_data['limit']) + 1 if chat_data['total_count'] > 0 else 1
+            },
+            'customer_phone': customer_phone,
+            'whatsapp_phone_number': user.get('whatsapp_phone_number'),
+            'phone_number_id': phone_number_id
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching chat history: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
 
