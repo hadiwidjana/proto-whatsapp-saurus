@@ -80,26 +80,33 @@ class WhatsAppAIAgent:
             system_prompt = """You are an AI assistant that analyzes customer messages to determine the best response strategy.
 
 Your task is to analyze the customer's message and decide:
-1. "ai_response" - If you can provide a helpful response immediately
+1. "ai_response" - If you can provide a helpful response immediately (DEFAULT - be confident!)
 2. "get_context" - If you need business information (hours, services, pricing, etc.) to respond properly
-3. "escalate" - If the message requires human intervention
+3. "escalate" - ONLY if the customer explicitly asks for human help OR very specific complex issues
 
-Consider these factors:
-- Simple greetings, basic questions about hours/location/services can often be handled with business context
-- Complex complaints, specific orders, technical issues, or emotional situations need human attention
-- Requests for specific product details, pricing, or general business info need business context
-- Spam, inappropriate content, or unclear messages should be escalated
+IMPORTANT: Be confident in AI capabilities! Only escalate when:
+- Customer explicitly asks for "human", "agent", "representative", "speak to someone", etc.
+- Specific order issues with order numbers/IDs that need account access
+- Technical problems requiring system access
+- Billing/payment disputes requiring account verification
+- Legal complaints or threats
+
+DO NOT escalate for:
+- General questions about business, services, pricing, hours
+- Product information requests
+- How-to questions
+- General complaints (try to help first)
+- Simple troubleshooting
+- Basic customer service inquiries
+
+Default to "ai_response" or "get_context" - be helpful and confident!
 
 Conversation history (if any):
 {history_context}
 
 Current message: {message_text}
 
-Respond with:
-- decision: one of "ai_response", "get_context", "escalate"
-- confidence_score: 0.0-1.0 (how confident you are in this decision)
-- reasoning: brief explanation of your decision
-- needs_business_context: true/false"""
+Respond with your decision and reasoning."""
 
             response = self.llm.invoke([
                 SystemMessage(content=system_prompt.format(
@@ -109,21 +116,31 @@ Respond with:
                 HumanMessage(content=f"Analyze this message: {message_text}")
             ])
 
-            # Parse the response
+            # Parse the response - be more aggressive about AI handling
             content = response.content.lower()
+            message_lower = message_text.lower()
 
-            if "ai_response" in content:
-                decision = "ai_response"
-                needs_context = False
-            elif "get_context" in content:
-                decision = "get_context"
-                needs_context = True
-            else:
+            # Check for explicit human requests
+            human_keywords = [
+                "human", "agent", "representative", "speak to someone", "talk to someone",
+                "customer service", "customer support", "live chat", "real person"
+            ]
+
+            explicit_human_request = any(keyword in message_lower for keyword in human_keywords)
+
+            if explicit_human_request:
                 decision = "escalate"
                 needs_context = False
-
-            # Extract confidence score (simplified)
-            confidence_score = 0.8 if "high confidence" in content else 0.6
+                confidence_score = 0.9
+            elif "get_context" in content or any(word in message_lower for word in ["hours", "open", "closed", "location", "address", "services", "price", "cost", "about"]):
+                decision = "get_context"
+                needs_context = True
+                confidence_score = 0.8
+            else:
+                # Default to AI response for most cases
+                decision = "ai_response"
+                needs_context = False
+                confidence_score = 0.8
 
             state.update({
                 "decision": decision,
@@ -132,17 +149,17 @@ Respond with:
                 "reasoning": response.content
             })
 
-            logger.info(f"Message analysis: {decision} (confidence: {confidence_score})")
+            logger.info(f"Message analysis: {decision} (confidence: {confidence_score}) - Message: '{message_text[:50]}...'")
             return state
 
         except Exception as e:
             logger.error(f"Error analyzing message: {str(e)}")
-            # Default to escalation on error
+            # Default to AI response instead of escalation on error
             state.update({
-                "decision": "escalate",
-                "confidence_score": 0.3,
+                "decision": "ai_response",
+                "confidence_score": 0.5,
                 "needs_business_context": False,
-                "reasoning": f"Error during analysis: {str(e)}"
+                "reasoning": f"Error during analysis, defaulting to AI response: {str(e)}"
             })
             return state
 
