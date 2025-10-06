@@ -187,11 +187,13 @@ Respond with your decision and reasoning."""
         """Generate an AI response based on the message and business context"""
         try:
             message_text = state["message_text"]
-            business_context = state.get("business_context", {})
+            business_context = state.get("business_context") or {}
             conversation_history = state.get("conversation_history", [])
 
             # Prepare business information
             business_info = ""
+            business_name = "our business"
+
             if business_context:
                 business_name = business_context.get("business_name", "our business")
                 description = business_context.get("description", "")
@@ -227,6 +229,9 @@ Business Information:
 {hours_text}
 {faq_text}
 """
+            else:
+                # Handle case where no business context is available
+                business_info = "Business information not currently available."
 
             # Prepare conversation context
             history_context = ""
@@ -237,14 +242,14 @@ Business Information:
                     for msg in recent_messages
                 ])
 
-            system_prompt = f"""You are a helpful customer service AI assistant for {business_context.get('business_name', 'this business')}. 
+            system_prompt = f"""You are a helpful customer service AI assistant for {business_name}. 
 
 Your role:
-- Provide helpful, accurate information about the business
-- Be friendly, professional, and concise
-- Use the business information provided to answer questions
-- If you cannot answer something with the available information, politely suggest contacting human support
-- Always maintain a helpful and positive tone
+- Provide friendly, professional responses
+- Be helpful and positive
+- For simple greetings, respond warmly and ask how you can help
+- If you need specific business information that's not available, politely let them know you can get that information
+- Always maintain a helpful and conversational tone
 
 {business_info}
 
@@ -252,7 +257,7 @@ Your role:
 
 Current customer message: {message_text}
 
-Provide a helpful response. Keep it concise but informative."""
+Provide a helpful response. Keep it friendly and conversational."""
 
             response = self.llm.invoke([
                 SystemMessage(content=system_prompt),
@@ -265,7 +270,12 @@ Provide a helpful response. Keep it concise but informative."""
 
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
-            state["response_message"] = "I apologize, but I'm having some technical difficulties. A customer service representative will assist you shortly."
+            # Provide a simple fallback response for basic greetings
+            message_lower = state.get("message_text", "").lower()
+            if any(greeting in message_lower for greeting in ["hi", "hello", "hey", "good morning", "good afternoon"]):
+                state["response_message"] = "Hello! 👋 Thanks for reaching out. How can I help you today?"
+            else:
+                state["response_message"] = "Thank you for your message! How can I assist you today?"
             return state
 
     def escalate_to_human(self, state: AgentState) -> AgentState:
