@@ -321,20 +321,23 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             )
             conversation_history = conversation_history_result.get('messages', [])
 
-            # Create initial state
+            # Create initial state with serializable data only
             initial_state = AgentState(
                 message_text=message_text,
                 customer_phone=customer_phone,
                 phone_number_id=phone_number_id,
                 user_id=user_id,
                 business_context=None,
-                conversation_history=conversation_history,
+                conversation_history=[],  # Simplified to avoid serialization issues
                 decision=None,
                 response_message=None,
                 needs_business_context=False,
                 confidence_score=0.0,
                 reasoning=""
             )
+
+            # Store conversation history separately to avoid serialization issues
+            self._conversation_history = conversation_history
 
             # Process through the workflow
             config = {"configurable": {"thread_id": f"{phone_number_id}_{customer_phone}"}}
