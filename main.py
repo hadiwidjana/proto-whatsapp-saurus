@@ -2,10 +2,12 @@ from flask import Flask, request, jsonify
 import logging
 import os
 import json
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from models import Database, verify_jwt_token
 from services import OpenAIService, WhatsAppAPIService, AutoReplyService
+from ai_agent import WhatsAppAIAgent
 
 load_dotenv()
 
@@ -36,17 +38,19 @@ except Exception as e:
 openai_service = None
 whatsapp_service = None
 auto_reply_service = None
+ai_agent = None
 
 try:
     if os.getenv('OPENAI_API_KEY') and os.getenv('WHATSAPP_ACCESS_TOKEN'):
         openai_service = OpenAIService()
         whatsapp_service = WhatsAppAPIService()
         auto_reply_service = AutoReplyService(db, openai_service, whatsapp_service)
-        logger.info("Auto-reply services initialized")
+        ai_agent = WhatsAppAIAgent(db, whatsapp_service)
+        logger.info("AI agent and services initialized")
     else:
-        logger.warning("Auto-reply services not initialized - missing required environment variables")
+        logger.warning("AI agent not initialized - missing required environment variables")
 except Exception as e:
-    logger.error(f"Failed to initialize auto-reply services: {str(e)}")
+    logger.error(f"Failed to initialize AI agent: {str(e)}")
 
 # def verify_signature(payload_body, signature):
 #     if not APP_SECRET:
@@ -75,13 +79,6 @@ def webhook_verify():
 @app.route('/', methods=['POST'])
 def webhook_receive():
     try:
-        # signature = request.headers.get('X-Hub-Signature-256', '')
-        # payload = request.get_data()
-
-        # if APP_SECRET and not verify_signature(payload, signature):
-        #     logger.warning("Invalid signature in webhook request")
-        #     return '', 401
-
         data = request.get_json()
 
         if not data:
@@ -98,12 +95,28 @@ def webhook_receive():
                 db.save_message(data)
                 logger.info("Message successfully stored in database")
 
-                # Process auto-reply if services are available
-                if auto_reply_service:
+                # Process with AI agent if available
+                if ai_agent:
                     try:
-                        auto_reply_service.process_and_reply(data)
-                    except Exception as reply_error:
-                        logger.error(f"Auto-reply processing failed: {str(reply_error)}")
+                        # Run the async AI agent processing
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        response = loop.run_until_complete(ai_agent.process_message(data))
+                        loop.close()
+
+                        if response:
+                            logger.info(f"AI agent processed message successfully: {response[:100]}...")
+                        else:
+                            logger.info("AI agent determined no response needed")
+                    except Exception as ai_error:
+                        logger.error(f"AI agent processing failed: {str(ai_error)}")
+
+                        # Fallback to basic auto-reply
+                        if auto_reply_service:
+                            try:
+                                auto_reply_service.process_and_reply(data)
+                            except Exception as fallback_error:
+                                logger.error(f"Fallback auto-reply failed: {str(fallback_error)}")
 
             except Exception as db_error:
                 logger.error(f"Failed to store message in database: {str(db_error)}")

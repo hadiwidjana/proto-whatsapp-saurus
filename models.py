@@ -1,61 +1,22 @@
-from pymongo import MongoClient
-from datetime import datetime, timezone
 import os
 import logging
 import jwt
+from datetime import datetime, timezone
 from functools import wraps
 from flask import request, jsonify
+from pymongo import MongoClient
+from bson import ObjectId
+from typing import Optional, Dict, List, Any
 
 logger = logging.getLogger(__name__)
 
-class WhatsAppMessage:
-    def __init__(self, entry_id, wa_id, message_id, from_number, timestamp, message_type,
-                 message_content, message_direction="RECEIVED", contact_name=None, phone_number_id=None,
-                 display_phone_number=None, raw_webhook_data=None):
-        self.entry_id = entry_id
-        self.wa_id = wa_id
-        self.message_id = message_id
-        self.from_number = from_number
-        self.timestamp = timestamp
-        self.message_type = message_type
-        self.message_content = message_content
-        self.message_direction = message_direction
-        self.contact_name = contact_name
-        self.phone_number_id = phone_number_id
-        self.display_phone_number = display_phone_number
-        self.created_at = datetime.now(timezone.utc)
-        self.raw_webhook_data = raw_webhook_data
-
-    def to_dict(self):
-        return {
-            "_id": self.entry_id,
-            "wa_id": self.wa_id,
-            "message_id": self.message_id,
-            "from_number": self.from_number,
-            "timestamp": self.timestamp,
-            "message_type": self.message_type,
-            "message_content": self.message_content,
-            "message_direction": self.message_direction,
-            "contact_name": self.contact_name,
-            "phone_number_id": self.phone_number_id,
-            "display_phone_number": self.display_phone_number,
-            "created_at": self.created_at,
-            "raw_webhook_data": self.raw_webhook_data
-        }
-
 class Database:
     def __init__(self):
-        self.mongo_uri = os.getenv('MONGODB_URI')
-        if not self.mongo_uri:
-            raise ValueError("MONGODB_URI environment variable not set")
-
-        self.client = MongoClient(self.mongo_uri)
-
-        # Extract database name from URI or use default
-        db_name = os.getenv('MONGODB_DATABASE', 'whatsapp_saurus')
-        self.db = self.client[db_name]
-        self.collection = self.db.whatsapp_messages
+        self.client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'))
+        self.db = self.client[os.getenv('DATABASE_NAME', 'whatsapp_saurus')]
+        self.collection = self.db.messages
         self.users_collection = self.db.users
+        self.business_collection = self.db.business_details
 
         self._create_indexes()
 
@@ -65,10 +26,16 @@ class Database:
             self.collection.create_index("from_number")
             self.collection.create_index("message_direction")
             self.collection.create_index("created_at")
+            self.collection.create_index([("phone_number_id", 1), ("from_number", 1)])
+
+            self.users_collection.create_index("email", unique=True)
+            self.users_collection.create_index("whatsapp_phone_number_id")
+
+            self.business_collection.create_index("user_id")
         except Exception as e:
             logger.warning(f"Failed to create indexes: {str(e)}")
 
-    def save_message(self, message_data):
+    def save_message(self, message_data: Dict[str, Any]) -> bool:
         try:
             for entry in message_data.get('entry', []):
                 for change in entry.get('changes', []):
@@ -89,225 +56,148 @@ class Database:
                             phone_number_id = metadata.get('phone_number_id', '')
                             message_id = message.get('id')
                             message_from = message.get('from', '')
-                            message_direction = "SENT" if message_from == business_phone else "RECEIVED"
+                            timestamp = message.get('timestamp', '')
+                            message_type = message.get('type', '')
 
-                            # Generate new ID format based on message direction
-                            timestamp = message.get('timestamp', str(int(datetime.now(timezone.utc).timestamp())))
+                            message_text = ''
+                            if message_type == 'text':
+                                message_text = message.get('text', {}).get('body', '')
 
-                            if message_direction == "RECEIVED":
-                                entry_id = f"received_{phone_number_id}_{timestamp}"
+                            document = {
+                                'message_id': message_id,
+                                'phone_number_id': phone_number_id,
+                                'business_phone': business_phone,
+                                'from_number': message_from,
+                                'wa_id': wa_id,
+                                'contact_name': contact_name,
+                                'message_text': message_text,
+                                'message_type': message_type,
+                                'message_direction': 'incoming',
+                                'timestamp': timestamp,
+                                'created_at': datetime.now(timezone.utc),
+                                'raw_data': message
+                            }
+
+                            existing = self.collection.find_one({'message_id': message_id})
+                            if not existing:
+                                self.collection.insert_one(document)
+                                logger.info(f"Message {message_id} saved successfully")
                             else:
-                                entry_id = f"sent_{phone_number_id}_{timestamp}"
-
-                            wa_message = WhatsAppMessage(
-                                entry_id=entry_id,
-                                wa_id=wa_id,
-                                message_id=message_id,
-                                from_number=message.get('from'),
-                                timestamp=timestamp,
-                                message_type=message.get('type'),
-                                message_content=message.get(message.get('type', 'text'), {}),
-                                message_direction=message_direction,
-                                contact_name=contact_name,
-                                phone_number_id=metadata.get('phone_number_id'),
-                                display_phone_number=metadata.get('display_phone_number'),
-                                raw_webhook_data=message_data
-                            )
-
-                            self.collection.replace_one(
-                                {"_id": wa_message.entry_id},
-                                wa_message.to_dict(),
-                                upsert=True
-                            )
-
+                                logger.info(f"Message {message_id} already exists")
             return True
         except Exception as e:
-            logger.error(f"Database save error: {str(e)}")
-            raise e
+            logger.error(f"Error saving message: {str(e)}")
+            return False
 
-    def close(self):
-        if hasattr(self, 'client'):
-            self.client.close()
-
-    def get_conversation_history(self, from_number, limit=10):
-        logger.info(f"Retrieving conversation history for contact, limit: {limit}")
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         try:
-            messages = self.collection.find(
-                {"from_number": from_number},
-                {"message_content": 1, "message_direction": 1, "timestamp": 1, "_id": 0}
-            ).sort("timestamp", -1).limit(limit)
-
-            message_list = list(messages)
-            logger.info(f"Successfully retrieved {len(message_list)} messages from conversation history")
-            return message_list
+            return self.users_collection.find_one({'email': email})
         except Exception as e:
-            logger.error(f"Error retrieving conversation history: {str(e)}")
-            return []
-
-    def get_user_by_email(self, email):
-        try:
-            user = self.users_collection.find_one({"email": email})
-            return user
-        except Exception as e:
-            logger.error(f"Error retrieving user by email: {str(e)}")
+            logger.error(f"Error getting user by email: {str(e)}")
             return None
 
-    def get_customers_by_phone_number_id(self, phone_number_id, limit=100):
+    def get_user_by_phone_number_id(self, phone_number_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            return self.users_collection.find_one({'whatsapp_phone_number_id': phone_number_id})
+        except Exception as e:
+            logger.error(f"Error getting user by phone number ID: {str(e)}")
+            return None
+
+    def get_business_details(self, user_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            return self.business_collection.find_one({'user_id': ObjectId(user_id)})
+        except Exception as e:
+            logger.error(f"Error getting business details: {str(e)}")
+            return None
+
+    def get_customers_by_phone_number_id(self, phone_number_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         try:
             pipeline = [
-                {
-                    "$match": {
-                        "phone_number_id": phone_number_id
-                    }
-                },
-                {
-                    "$addFields": {
-                        "customer_phone": {
-                            "$cond": {
-                                "if": {"$eq": ["$message_direction", "RECEIVED"]},
-                                "then": "$from_number",
-                                "else": "$wa_id"
-                            }
-                        }
-                    }
-                },
-                {
-                    "$match": {
-                        "customer_phone": {"$ne": None}
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": "$customer_phone",
-                        "contact_name": {"$last": "$contact_name"},
-                        "last_message_timestamp": {"$max": "$timestamp"},
-                        "last_message_content": {"$last": "$message_content"},
-                        "message_count": {"$sum": 1}
-                    }
-                },
-                {
-                    "$project": {
-                        "_id": 0,
-                        "phone_number": "$_id",
-                        "contact_name": 1,
-                        "last_message_timestamp": 1,
-                        "last_message_content": 1,
-                        "message_count": 1
-                    }
-                },
-                {
-                    "$sort": {"last_message_timestamp": -1}
-                },
-                {
-                    "$limit": limit
-                }
+                {'$match': {'phone_number_id': phone_number_id, 'message_direction': 'incoming'}},
+                {'$group': {
+                    '_id': '$from_number',
+                    'contact_name': {'$last': '$contact_name'},
+                    'last_message': {'$last': '$message_text'},
+                    'last_message_time': {'$last': '$created_at'},
+                    'message_count': {'$sum': 1}
+                }},
+                {'$sort': {'last_message_time': -1}},
+                {'$limit': limit},
+                {'$project': {
+                    'phone_number': '$_id',
+                    'contact_name': 1,
+                    'last_message': 1,
+                    'last_message_time': 1,
+                    'message_count': 1,
+                    '_id': 0
+                }}
             ]
-
-            customers = list(self.collection.aggregate(pipeline))
-            logger.info(f"Retrieved {len(customers)} customers for phone_number_id: {phone_number_id}")
-            return customers
+            return list(self.collection.aggregate(pipeline))
         except Exception as e:
-            logger.error(f"Error retrieving customers: {str(e)}")
+            logger.error(f"Error getting customers: {str(e)}")
             return []
 
-    def get_chat_history(self, phone_number_id, customer_phone, limit=50, offset=0):
+    def get_chat_history(self, phone_number_id: str, customer_phone: str, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
         try:
-            pipeline = [
-                {
-                    "$match": {
-                        "phone_number_id": phone_number_id,
-                        "$or": [
-                            {
-                                "$and": [
-                                    {"message_direction": "RECEIVED"},
-                                    {"wa_id": customer_phone}
-                                ]
-                            },
-                            {
-                                "$and": [
-                                    {"message_direction": "SENT"},
-                                    {"wa_id": customer_phone}
-                                ]
-                            }
-                        ]
-                    }
-                },
-                {
-                    "$project": {
-                        "_id": 0,
-                        "message_id": 1,
-                        "from_number": 1,
-                        "timestamp": 1,
-                        "message_type": 1,
-                        "message_content": 1,
-                        "message_direction": 1,
-                        "contact_name": 1,
-                        "created_at": 1
-                    }
-                },
-                {
-                    "$sort": {"timestamp": -1}
-                },
-                {
-                    "$skip": offset
-                },
-                {
-                    "$limit": limit
-                },
-                {
-                    "$sort": {"timestamp": 1}
-                }
-            ]
+            # Get total count
+            total_count = self.collection.count_documents({
+                'phone_number_id': phone_number_id,
+                '$or': [
+                    {'from_number': customer_phone},
+                    {'to_number': customer_phone}
+                ]
+            })
 
-            messages = list(self.collection.aggregate(pipeline))
+            # Get messages with pagination
+            messages = list(self.collection.find({
+                'phone_number_id': phone_number_id,
+                '$or': [
+                    {'from_number': customer_phone},
+                    {'to_number': customer_phone}
+                ]
+            }).sort('created_at', -1).skip(offset).limit(limit))
 
-            total_count_pipeline = [
-                {
-                    "$match": {
-                        "phone_number_id": phone_number_id,
-                        "$or": [
-                            {
-                                "$and": [
-                                    {"message_direction": "RECEIVED"},
-                                    {"wa_id": customer_phone}
-                                ]
-                            },
-                            {
-                                "$and": [
-                                    {"message_direction": "SENT"},
-                                    {"wa_id": customer_phone}
-                                ]
-                            }
-                        ]
-                    }
-                },
-                {
-                    "$count": "total"
-                }
-            ]
-
-            total_result = list(self.collection.aggregate(total_count_pipeline))
-            total_count = total_result[0]["total"] if total_result else 0
-
-            logger.info(f"Retrieved {len(messages)} messages (offset: {offset}, limit: {limit}) out of {total_count} total messages")
+            # Convert ObjectId to string for JSON serialization
+            for message in messages:
+                if '_id' in message:
+                    message['_id'] = str(message['_id'])
 
             return {
-                "messages": messages,
-                "total_count": total_count,
-                "offset": offset,
-                "limit": limit,
-                "has_more": (offset + len(messages)) < total_count
+                'messages': messages,
+                'total_count': total_count,
+                'offset': offset,
+                'limit': limit,
+                'has_more': (offset + limit) < total_count
             }
-
         except Exception as e:
-            logger.error(f"Error retrieving chat history: {str(e)}")
+            logger.error(f"Error getting chat history: {str(e)}")
             return {
-                "messages": [],
-                "total_count": 0,
-                "offset": offset,
-                "limit": limit,
-                "has_more": False
+                'messages': [],
+                'total_count': 0,
+                'offset': offset,
+                'limit': limit,
+                'has_more': False
             }
+
+    def save_outgoing_message(self, phone_number_id: str, to_number: str, message_text: str, message_id: str = None) -> bool:
+        try:
+            document = {
+                'message_id': message_id or f"out_{datetime.now().timestamp()}",
+                'phone_number_id': phone_number_id,
+                'to_number': to_number,
+                'message_text': message_text,
+                'message_type': 'text',
+                'message_direction': 'outgoing',
+                'created_at': datetime.now(timezone.utc),
+                'ai_generated': True
+            }
+
+            self.collection.insert_one(document)
+            logger.info(f"Outgoing message saved successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving outgoing message: {str(e)}")
+            return False
 
 def verify_jwt_token(f):
     @wraps(f)
@@ -315,23 +205,21 @@ def verify_jwt_token(f):
         token = request.headers.get('Authorization')
 
         if not token:
-            return jsonify({'error': 'Token is missing'}), 401
+            return jsonify({'error': 'No token provided'}), 401
 
         if token.startswith('Bearer '):
             token = token[7:]
 
         try:
-            decoded_token = jwt.decode(
+            payload = jwt.decode(
                 token,
-                options={"verify_signature": False}
+                os.getenv('JWT_SECRET_KEY', 'your-secret-key'),
+                algorithms=['HS256']
             )
-
-            email = decoded_token.get('sub')
-            if not email:
-                return jsonify({'error': 'Invalid token format'}), 401
-
-            request.user_email = email
-
+            request.user_email = payload.get('email')
+            request.user_id = payload.get('user_id')
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token has expired'}), 401
         except jwt.InvalidTokenError:
             return jsonify({'error': 'Invalid token'}), 401
 

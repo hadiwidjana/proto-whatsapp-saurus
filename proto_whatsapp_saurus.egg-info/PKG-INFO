@@ -1,7 +1,16 @@
 Metadata-Version: 2.4
 Name: proto-whatsapp-saurus
 Version: 0.1.0
-Summary: Add your description here
-Requires-Python: >=3.11
-Requires-Dist: flask>=3.0.0
+Summary: WhatsApp AI Agent with LangGraph
+Requires-Dist: flask>=2.3.0
 Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: pymongo>=4.5.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: requests>=2.31.0
+Requires-Dist: langgraph>=0.0.40
+Requires-Dist: langchain>=0.1.0
+Requires-Dist: langchain-openai>=0.1.0
+Requires-Dist: pyjwt>=2.8.0
+Requires-Dist: cryptography>=41.0.0
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: typing-extensions>=4.8.0
