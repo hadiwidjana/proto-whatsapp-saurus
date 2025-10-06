@@ -105,7 +105,14 @@ class Database:
 
     def get_business_details(self, user_id: str) -> Optional[Dict[str, Any]]:
         try:
-            return self.business_collection.find_one({'user_id': ObjectId(user_id)})
+            business_details = self.business_collection.find_one({'user_id': ObjectId(user_id)})
+            if business_details:
+                # Convert ObjectId to string for JSON serialization
+                if '_id' in business_details:
+                    business_details['_id'] = str(business_details['_id'])
+                if 'user_id' in business_details:
+                    business_details['user_id'] = str(business_details['user_id'])
+            return business_details
         except Exception as e:
             logger.error(f"Error getting business details: {str(e)}")
             return None
