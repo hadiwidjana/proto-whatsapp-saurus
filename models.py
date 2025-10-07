@@ -186,7 +186,7 @@ class Database:
                 'has_more': False
             }
 
-    def save_outgoing_message(self, phone_number_id: str, to_number: str, message_text: str, message_id: str = None) -> bool:
+    def save_outgoing_message(self, phone_number_id: str, to_number: str, message_text: str, message_id: str = None, cost_amount: int = 0, cost_reason: str = "AI response") -> bool:
         try:
             document = {
                 'message_id': message_id or f"out_{datetime.now().timestamp()}",
@@ -196,11 +196,14 @@ class Database:
                 'message_type': 'text',
                 'message_direction': 'outgoing',
                 'created_at': datetime.now(timezone.utc),
-                'ai_generated': True
+                'ai_generated': True,
+                'cost_amount': cost_amount,
+                'cost_reason': cost_reason,
+                'billing_processed': True
             }
 
             self.collection.insert_one(document)
-            logger.info(f"Outgoing message saved successfully")
+            logger.info(f"Outgoing message saved successfully with cost: {cost_amount} rupiah")
             return True
         except Exception as e:
             logger.error(f"Error saving outgoing message: {str(e)}")

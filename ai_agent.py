@@ -340,13 +340,13 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
 
             # Base deduction amounts (configurable)
             base_amounts = {
-                "escalate": 100,          # Minimal effort - just routing to human
-                "ai_response": 200,       # Standard AI response
-                "get_context": 300        # Higher effort - requires context retrieval + AI processing
+                "escalate": 0,          # Minimal effort - just routing to human
+                "ai_response": 50,       # Standard AI response
+                "get_context": 100        # Higher effort - requires context retrieval + AI processing
             }
 
             # Get base amount
-            base_amount = base_amounts.get(decision, 200)
+            base_amount = base_amounts.get(decision, 0)
 
             # Adjust based on message complexity (length as a simple heuristic)
             message_length = len(message_text)
@@ -365,8 +365,8 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             # Calculate final amount
             final_amount = int(base_amount * complexity_multiplier * confidence_multiplier)
 
-            # Ensure amount is within reasonable bounds (100-300 rupiah as specified)
-            final_amount = max(100, min(300, final_amount))
+            # Ensure amount is within reasonable bounds (100-200 rupiah as specified)
+            final_amount = max(0, min(200, final_amount))
 
             # Set deduction details
             reason_map = {
@@ -385,7 +385,7 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
         except Exception as e:
             logger.error(f"Error calculating balance deduction: {str(e)}")
             # Default deduction on error
-            state["balance_deduction_amount"] = 200
+            state["balance_deduction_amount"] = 0
             state["balance_deduction_reason"] = "AI response processing (default)"
             return state
 
@@ -455,7 +455,7 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             result = await self.app.ainvoke(initial_state, config)
 
             response_message = result.get("response_message")
-            deduction_amount = result.get("balance_deduction_amount", 200)
+            deduction_amount = result.get("balance_deduction_amount", 0)
             deduction_reason = result.get("balance_deduction_reason", "AI response processing")
 
             # Perform balance deduction before sending response
@@ -484,7 +484,11 @@ For assistance with topping up, please contact our support team."""
 
                     if balance_warning_sent:
                         self.db.save_outgoing_message(
-                            phone_number_id, customer_phone, insufficient_balance_message
+                            phone_number_id,
+                            customer_phone,
+                            insufficient_balance_message,
+                            cost_amount=0,
+                            cost_reason="Insufficient balance warning (no charge)"
                         )
                         logger.info(f"Insufficient balance warning sent to {customer_phone}")
                         return insufficient_balance_message
@@ -500,9 +504,13 @@ For assistance with topping up, please contact our support team."""
                 )
 
                 if success:
-                    # Save the outgoing message to database with balance info
+                    # Save the outgoing message to database with cost info
                     self.db.save_outgoing_message(
-                        phone_number_id, customer_phone, response_message
+                        phone_number_id,
+                        customer_phone,
+                        response_message,
+                        cost_amount=deduction_amount,
+                        cost_reason=deduction_reason
                     )
                     logger.info(f"Response sent successfully to {customer_phone}. Balance deducted: {deduction_amount}")
                     return response_message
