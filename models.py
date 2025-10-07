@@ -223,8 +223,13 @@ def verify_jwt_token(f):
                 os.getenv('JWT_SECRET_KEY', 'your-secret-key'),
                 algorithms=['HS256']
             )
-            request.user_email = payload.get('email')
+            # Extract email from 'sub' field (standard JWT claim) or 'email' field
+            request.user_email = payload.get('sub') or payload.get('email')
             request.user_id = payload.get('user_id')
+
+            if not request.user_email:
+                return jsonify({'error': 'Invalid token: no email found'}), 401
+
         except jwt.ExpiredSignatureError:
             return jsonify({'error': 'Token has expired'}), 401
         except jwt.InvalidTokenError:
