@@ -206,6 +206,65 @@ class Database:
             logger.error(f"Error saving outgoing message: {str(e)}")
             return False
 
+    def deduct_user_balance(self, user_id: str, amount: int, reason: str = "AI response") -> Dict[str, Any]:
+        """
+        Deduct balance from user account with validation
+        Returns: {"success": bool, "new_balance": int, "message": str}
+        """
+        try:
+            user_object_id = ObjectId(user_id)
+
+            # Get current user balance
+            user = self.users_collection.find_one({"_id": user_object_id})
+            if not user:
+                return {"success": False, "new_balance": 0, "message": "User not found"}
+
+            current_balance = user.get("balance", 0)
+
+            # Check if user has sufficient balance
+            if current_balance < amount:
+                logger.warning(f"Insufficient balance for user {user_id}: {current_balance} < {amount}")
+                return {
+                    "success": False,
+                    "new_balance": current_balance,
+                    "message": f"Insufficient balance. Current: {current_balance}, Required: {amount}"
+                }
+
+            # Deduct balance
+            new_balance = current_balance - amount
+            result = self.users_collection.update_one(
+                {"_id": user_object_id},
+                {
+                    "$set": {
+                        "balance": new_balance,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+
+            if result.modified_count > 0:
+                logger.info(f"Balance deducted for user {user_id}: -{amount} (new balance: {new_balance})")
+                return {
+                    "success": True,
+                    "new_balance": new_balance,
+                    "message": f"Balance deducted: {amount}. New balance: {new_balance}"
+                }
+            else:
+                return {"success": False, "new_balance": current_balance, "message": "Failed to update balance"}
+
+        except Exception as e:
+            logger.error(f"Error deducting balance: {str(e)}")
+            return {"success": False, "new_balance": 0, "message": f"Error: {str(e)}"}
+
+    def get_user_balance(self, user_id: str) -> int:
+        """Get current user balance"""
+        try:
+            user = self.users_collection.find_one({"_id": ObjectId(user_id)})
+            return user.get("balance", 0) if user else 0
+        except Exception as e:
+            logger.error(f"Error getting user balance: {str(e)}")
+            return 0
+
 def verify_jwt_token(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):

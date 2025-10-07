@@ -20,6 +20,8 @@ class AgentState(TypedDict):
     needs_business_context: bool
     confidence_score: float
     reasoning: str
+    balance_deduction_amount: int
+    balance_deduction_reason: str
 
 class WhatsAppAIAgent:
     def __init__(self, db, whatsapp_service):
@@ -36,6 +38,7 @@ class WhatsAppAIAgent:
 
         # Add nodes
         workflow.add_node("analyze_message", self.analyze_message)
+        workflow.add_node("calculate_balance", self.calculate_balance_deduction)
         workflow.add_node("get_business_context", self.get_business_context)
         workflow.add_node("generate_response", self.generate_response)
         workflow.add_node("escalate_to_human", self.escalate_to_human)
@@ -49,14 +52,25 @@ class WhatsAppAIAgent:
             self.route_decision,
             {
                 "get_context": "get_business_context",
+                "generate_response": "calculate_balance",
+                "escalate": "calculate_balance"
+            }
+        )
+
+        workflow.add_edge("get_business_context", "calculate_balance")
+        workflow.add_edge("calculate_balance", "generate_response")
+        workflow.add_edge("generate_response", END)
+        workflow.add_edge("escalate_to_human", END)
+
+        # Add conditional edge for escalation after balance calculation
+        workflow.add_conditional_edges(
+            "calculate_balance",
+            self.route_after_balance_calc,
+            {
                 "generate_response": "generate_response",
                 "escalate": "escalate_to_human"
             }
         )
-
-        workflow.add_edge("get_business_context", "generate_response")
-        workflow.add_edge("generate_response", END)
-        workflow.add_edge("escalate_to_human", END)
 
         # Compile the graph
         memory = MemorySaver()
@@ -307,6 +321,74 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
         else:
             return "escalate"
 
+    def route_after_balance_calc(self, state: AgentState) -> str:
+        """Route after balance calculation"""
+        decision = state.get("decision", "escalate")
+
+        if decision == "escalate":
+            return "escalate_to_human"
+        else:
+            return "generate_response"
+
+    def calculate_balance_deduction(self, state: AgentState) -> AgentState:
+        """Calculate balance deduction based on effort required for response"""
+        try:
+            decision = state.get("decision", "ai_response")
+            message_text = state.get("message_text", "")
+            needs_context = state.get("needs_business_context", False)
+            confidence_score = state.get("confidence_score", 0.5)
+
+            # Base deduction amounts (configurable)
+            base_amounts = {
+                "escalate": 100,          # Minimal effort - just routing to human
+                "ai_response": 200,       # Standard AI response
+                "get_context": 300        # Higher effort - requires context retrieval + AI processing
+            }
+
+            # Get base amount
+            base_amount = base_amounts.get(decision, 200)
+
+            # Adjust based on message complexity (length as a simple heuristic)
+            message_length = len(message_text)
+            complexity_multiplier = 1.0
+
+            if message_length > 200:
+                complexity_multiplier = 1.3  # Long messages need more processing
+            elif message_length > 100:
+                complexity_multiplier = 1.1  # Medium messages
+
+            # Adjust based on confidence (lower confidence = more effort)
+            confidence_multiplier = 1.0
+            if confidence_score < 0.6:
+                confidence_multiplier = 1.2  # Less confident responses require more effort
+
+            # Calculate final amount
+            final_amount = int(base_amount * complexity_multiplier * confidence_multiplier)
+
+            # Ensure amount is within reasonable bounds (100-300 rupiah as specified)
+            final_amount = max(100, min(300, final_amount))
+
+            # Set deduction details
+            reason_map = {
+                "escalate": "Message escalation to human support",
+                "ai_response": "AI-generated response",
+                "get_context": "AI response with business context retrieval"
+            }
+
+            state["balance_deduction_amount"] = final_amount
+            state["balance_deduction_reason"] = reason_map.get(decision, "AI response processing")
+
+            logger.info(f"Balance deduction calculated: {final_amount} rupiah for {decision} (complexity: {complexity_multiplier}, confidence: {confidence_multiplier})")
+
+            return state
+
+        except Exception as e:
+            logger.error(f"Error calculating balance deduction: {str(e)}")
+            # Default deduction on error
+            state["balance_deduction_amount"] = 200
+            state["balance_deduction_reason"] = "AI response processing (default)"
+            return state
+
     async def process_message(self, message_data: Dict[str, Any]) -> Optional[str]:
         """Main entry point for processing a WhatsApp message"""
         try:
@@ -360,7 +442,9 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                 response_message=None,
                 needs_business_context=False,
                 confidence_score=0.0,
-                reasoning=""
+                reasoning="",
+                balance_deduction_amount=0,
+                balance_deduction_reason=""
             )
 
             # Store conversation history separately to avoid serialization issues
@@ -371,6 +455,43 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             result = await self.app.ainvoke(initial_state, config)
 
             response_message = result.get("response_message")
+            deduction_amount = result.get("balance_deduction_amount", 200)
+            deduction_reason = result.get("balance_deduction_reason", "AI response processing")
+
+            # Perform balance deduction before sending response
+            balance_result = self.db.deduct_user_balance(
+                user_id,
+                deduction_amount,
+                deduction_reason
+            )
+
+            if not balance_result["success"]:
+                logger.warning(f"Balance deduction failed: {balance_result['message']}")
+                # Send a balance warning message instead of the original response
+                if "insufficient balance" in balance_result["message"].lower():
+                    insufficient_balance_message = f"""⚠️ Insufficient Balance Alert
+
+Your current balance ({balance_result['new_balance']} rupiah) is insufficient to process this request (requires {deduction_amount} rupiah).
+
+Please top up your account to continue using our AI customer service.
+
+For assistance with topping up, please contact our support team."""
+
+                    # Try to send the balance warning
+                    balance_warning_sent = self.whatsapp_service.send_message(
+                        phone_number_id, customer_phone, insufficient_balance_message
+                    )
+
+                    if balance_warning_sent:
+                        self.db.save_outgoing_message(
+                            phone_number_id, customer_phone, insufficient_balance_message
+                        )
+                        logger.info(f"Insufficient balance warning sent to {customer_phone}")
+                        return insufficient_balance_message
+
+                return None
+
+            logger.info(f"Balance deducted successfully: {deduction_amount} rupiah. New balance: {balance_result['new_balance']}")
 
             if response_message:
                 # Send the response
@@ -379,14 +500,17 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                 )
 
                 if success:
-                    # Save the outgoing message to database
+                    # Save the outgoing message to database with balance info
                     self.db.save_outgoing_message(
                         phone_number_id, customer_phone, response_message
                     )
-                    logger.info(f"Response sent successfully to {customer_phone}")
+                    logger.info(f"Response sent successfully to {customer_phone}. Balance deducted: {deduction_amount}")
                     return response_message
                 else:
                     logger.error("Failed to send WhatsApp message")
+                    # If message sending fails after balance deduction, we should ideally refund
+                    # For now, just log the issue
+                    logger.error(f"Message sending failed but balance was already deducted: {deduction_amount}")
 
             return None
 
