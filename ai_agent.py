@@ -213,6 +213,9 @@ Respond with your decision and reasoning."""
                 phone = business_context.get("phone", "")
                 email = business_context.get("email", "")
                 website = business_context.get("website", "")
+                service_type = business_context.get("service_type", "")
+                pricing_model = business_context.get("pricing_model", "")
+                min_order_value = business_context.get("min_order_value", "")
 
                 # Opening hours
                 opening_hours = business_context.get("opening_hours", {})
@@ -222,28 +225,64 @@ Respond with your decision and reasoning."""
                         if not times.get("closed", False):
                             hours_text += f"{day.capitalize()}: {times.get('open', '')} - {times.get('close', '')}\n"
 
+                # Products/Services
+                products = business_context.get("products", [])
+                products_text = ""
+                if products:
+                    products_text = "\nProducts & Services:\n"
+                    for product in products:
+                        name = product.get("name", "")
+                        desc = product.get("description", "")
+                        price = product.get("price", "")
+                        category = product.get("category", "")
+                        products_text += f"- {name}: {desc}"
+                        if price:
+                            products_text += f" (Price: {price})"
+                        if category:
+                            products_text += f" [Category: {category}]"
+                        products_text += "\n"
+
+                # Payment methods
+                accepted_payments = business_context.get("accepted_payments", [])
+                payments_text = ""
+                if accepted_payments:
+                    payments_text = f"\nAccepted Payment Methods: {', '.join(accepted_payments)}"
+
+                # How to order
+                how_to_order = business_context.get("how_to_order", "")
+                order_text = ""
+                if how_to_order:
+                    order_text = f"\nHow to Order:\n{how_to_order}"
+
                 # FAQs
                 faqs = business_context.get("faqs", [])
                 faq_text = ""
                 if faqs and faqs[0].get("question"):
                     faq_text = "\nFrequently Asked Questions:\n"
-                    for faq in faqs[:3]:  # Limit to 3 FAQs
+                    for faq in faqs[:5]:  # Show up to 5 FAQs
                         if faq.get("question") and faq.get("answer"):
                             faq_text += f"Q: {faq['question']}\nA: {faq['answer']}\n\n"
 
+                # Build comprehensive business info
                 business_info = f"""
 Business Information:
 - Name: {business_name}
 - Description: {description}
+- Service Type: {service_type}
 - Phone: {phone}
 - Email: {email}
 - Website: {website}
-- Opening Hours:
+- Pricing Model: {pricing_model}
+- Minimum Order: {min_order_value}
+
+Opening Hours:
 {hours_text}
+{products_text}
+{payments_text}
+{order_text}
 {faq_text}
 """
             else:
-                # Handle case where no business context is available
                 business_info = "Business information not currently available."
 
             # Prepare conversation context
@@ -255,14 +294,22 @@ Business Information:
                     for msg in recent_messages
                 ])
 
+            # Get default language for culturally appropriate responses
+            default_language = business_context.get("default_language", "en")
+            language_context = ""
+            if default_language == "id":
+                language_context = "Note: This business primarily serves Indonesian customers. Use friendly, professional Indonesian when appropriate, but English is also acceptable."
+
             system_prompt = f"""You are a helpful customer service AI assistant for {business_name}. 
 
 Your role:
 - Provide friendly, professional responses
 - Be helpful and positive
 - For simple greetings, respond warmly and ask how you can help
-- If you need specific business information that's not available, politely let them know you can get that information
+- Use the business information provided to answer customer questions accurately
+- If customers ask about products, pricing, payment methods, or how to order, use the specific information provided
 - Always maintain a helpful and conversational tone
+{language_context}
 
 {business_info}
 
@@ -270,7 +317,7 @@ Your role:
 
 Current customer message: {message_text}
 
-Provide a helpful response. Keep it friendly and conversational."""
+Provide a helpful response using the business information above. Keep it friendly and conversational."""
 
             response = self.llm.invoke([
                 SystemMessage(content=system_prompt),
