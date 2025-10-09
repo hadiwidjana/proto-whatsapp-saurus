@@ -259,7 +259,7 @@ Respond with your decision and reasoning."""
                 faq_text = ""
                 if faqs and faqs[0].get("question"):
                     faq_text = "\nFrequently Asked Questions:\n"
-                    for faq in faqs[:5]:  # Show up to 5 FAQs
+                    for faq in faqs:  # Show up to 5 FAQs
                         if faq.get("question") and faq.get("answer"):
                             faq_text += f"Q: {faq['question']}\nA: {faq['answer']}\n\n"
 
