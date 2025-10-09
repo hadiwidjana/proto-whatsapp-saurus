@@ -51,9 +51,8 @@ class WhatsAppAIAgent:
             "analyze_message",
             self.route_decision,
             {
-                "get_context": "get_business_context",
-                "generate_response": "calculate_balance",
-                "escalate": "calculate_balance"
+                "ai_response": "get_business_context",
+                "escalate": "get_business_context"
             }
         )
 
@@ -311,15 +310,14 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             return state
 
     def route_decision(self, state: AgentState) -> str:
-        """Route based on the analysis decision"""
-        decision = state.get("decision", "escalate")
+        """Route based on the analysis decision - always get business context first"""
+        decision = state.get("decision", "ai_response")
 
-        if decision == "get_context":
-            return "get_context"
-        elif decision == "ai_response":
-            return "generate_response"
-        else:
+        # Always route to get business context first since we need it for every response
+        if decision == "escalate":
             return "escalate"
+        else:
+            return "ai_response"
 
     def route_after_balance_calc(self, state: AgentState) -> str:
         """Route after balance calculation"""
@@ -335,57 +333,80 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
         try:
             decision = state.get("decision", "ai_response")
             message_text = state.get("message_text", "")
-            needs_context = state.get("needs_business_context", False)
             confidence_score = state.get("confidence_score", 0.5)
+            business_context = state.get("business_context", {})
 
-            # Base deduction amounts (configurable)
-            base_amounts = {
-                "escalate": 0,          # Minimal effort - just routing to human
-                "ai_response": 50,       # Standard AI response
-                "get_context": 100        # Higher effort - requires context retrieval + AI processing
-            }
+            # Updated pricing model - business context is always retrieved
+            # Base deduction amounts (in rupiah)
+            if decision == "escalate":
+                # Even escalation now gets business context + routing effort
+                base_amount = 25  # Minimal cost for escalation with context
+            else:
+                # All AI responses now include business context retrieval + AI processing
+                base_amount = 75  # Standard cost for AI response with business context
 
-            # Get base amount
-            base_amount = base_amounts.get(decision, 0)
-
-            # Adjust based on message complexity (length as a simple heuristic)
+            # Complexity adjustments based on message length
             message_length = len(message_text)
             complexity_multiplier = 1.0
 
-            if message_length > 200:
-                complexity_multiplier = 1.3  # Long messages need more processing
+            if message_length > 300:
+                complexity_multiplier = 1.4  # Very long messages
+            elif message_length > 200:
+                complexity_multiplier = 1.25  # Long messages
             elif message_length > 100:
-                complexity_multiplier = 1.1  # Medium messages
+                complexity_multiplier = 1.1   # Medium messages
 
-            # Adjust based on confidence (lower confidence = more effort)
+            # Confidence adjustment (lower confidence = more LLM processing effort)
             confidence_multiplier = 1.0
-            if confidence_score < 0.6:
-                confidence_multiplier = 1.2  # Less confident responses require more effort
+            if confidence_score < 0.5:
+                confidence_multiplier = 1.3  # Much more effort for low confidence
+            elif confidence_score < 0.7:
+                confidence_multiplier = 1.15  # Slightly more effort
+
+            # Business context richness bonus (more context = higher value)
+            context_multiplier = 1.0
+            if business_context:
+                context_features = 0
+                if business_context.get("business_name"):
+                    context_features += 1
+                if business_context.get("opening_hours"):
+                    context_features += 1
+                if business_context.get("faqs") and len(business_context.get("faqs", [])) > 0:
+                    context_features += 1
+                if business_context.get("description"):
+                    context_features += 1
+
+                # More complete business context = slightly higher cost (more valuable response)
+                if context_features >= 3:
+                    context_multiplier = 1.2
+                elif context_features >= 2:
+                    context_multiplier = 1.1
 
             # Calculate final amount
-            final_amount = int(base_amount * complexity_multiplier * confidence_multiplier)
+            final_amount = int(base_amount * complexity_multiplier * confidence_multiplier * context_multiplier)
 
-            # Ensure amount is within reasonable bounds (100-200 rupiah as specified)
-            final_amount = max(0, min(200, final_amount))
+            # Ensure amount is within reasonable bounds (25-200 rupiah)
+            final_amount = max(25, min(200, final_amount))
 
-            # Set deduction details
-            reason_map = {
-                "escalate": "Message escalation to human support",
-                "ai_response": "AI-generated response",
-                "get_context": "AI response with business context retrieval"
-            }
+            # Updated reason descriptions
+            if decision == "escalate":
+                reason = "Message escalation with business context lookup"
+            else:
+                reason = "AI response with business context retrieval and processing"
 
             state["balance_deduction_amount"] = final_amount
-            state["balance_deduction_reason"] = reason_map.get(decision, "AI response processing")
+            state["balance_deduction_reason"] = reason
 
-            logger.info(f"Balance deduction calculated: {final_amount} rupiah for {decision} (complexity: {complexity_multiplier}, confidence: {confidence_multiplier})")
+            logger.info(f"Balance deduction calculated: {final_amount} rupiah for {decision} "
+                       f"(complexity: {complexity_multiplier:.2f}, confidence: {confidence_multiplier:.2f}, "
+                       f"context: {context_multiplier:.2f})")
 
             return state
 
         except Exception as e:
             logger.error(f"Error calculating balance deduction: {str(e)}")
             # Default deduction on error
-            state["balance_deduction_amount"] = 0
+            state["balance_deduction_amount"] = 50
             state["balance_deduction_reason"] = "AI response processing (default)"
             return state
 
