@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from services import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +16,21 @@ class AgentState(TypedDict):
     user_id: str
     business_context: Optional[Dict[str, Any]]
     conversation_history: List[Dict[str, Any]]
-    decision: Optional[str]  # "ai_response", "human_required", "escalate"
+    decision: Optional[str]  # "ai_response", "human_required", "escalate", "process_order"
     response_message: Optional[str]
     needs_business_context: bool
     confidence_score: float
     reasoning: str
     balance_deduction_amount: int
     balance_deduction_reason: str
+    order_intent: bool
+    order_details: Optional[str]
 
 class WhatsAppAIAgent:
     def __init__(self, db, whatsapp_service):
         self.db = db
         self.whatsapp_service = whatsapp_service
+        self.email_service = EmailService()
         self.llm = ChatOpenAI(
             model="gpt-4",
             temperature=0.3,
@@ -42,6 +46,7 @@ class WhatsAppAIAgent:
         workflow.add_node("get_business_context", self.get_business_context)
         workflow.add_node("generate_response", self.generate_response)
         workflow.add_node("escalate_to_human", self.escalate_to_human)
+        workflow.add_node("process_order", self.process_order)
 
         # Set entry point
         workflow.set_entry_point("analyze_message")
@@ -52,24 +57,27 @@ class WhatsAppAIAgent:
             self.route_decision,
             {
                 "ai_response": "get_business_context",
-                "escalate": "get_business_context"
+                "escalate": "get_business_context",
+                "process_order": "get_business_context"
             }
         )
 
         workflow.add_edge("get_business_context", "calculate_balance")
-        workflow.add_edge("calculate_balance", "generate_response")
-        workflow.add_edge("generate_response", END)
-        workflow.add_edge("escalate_to_human", END)
 
-        # Add conditional edge for escalation after balance calculation
+        # Add conditional edge after balance calculation for order processing
         workflow.add_conditional_edges(
             "calculate_balance",
             self.route_after_balance_calc,
             {
                 "generate_response": "generate_response",
-                "escalate": "escalate_to_human"
+                "escalate": "escalate_to_human",
+                "process_order": "process_order"
             }
         )
+
+        workflow.add_edge("generate_response", END)
+        workflow.add_edge("escalate_to_human", END)
+        workflow.add_edge("process_order", END)
 
         # Compile the graph
         memory = MemorySaver()
@@ -98,25 +106,29 @@ class WhatsAppAIAgent:
 
 Your task is to analyze the customer's message and decide:
 1. "ai_response" - If you can provide a helpful response immediately (DEFAULT - be confident!)
-2. "get_context" - If you need business information (hours, services, pricing, etc.) to respond properly
+2. "process_order" - If the customer is expressing interest in purchasing, ordering, or booking services
 3. "escalate" - ONLY if the customer explicitly asks for human help OR very specific complex issues
 
-IMPORTANT: Be confident in AI capabilities! Only escalate when:
+IMPORTANT: Detect order intent when customers say things like:
+- "I want to order", "I'd like to buy", "Can I purchase", "I need", "Book me"
+- "How much for", "What's the price", "I'm interested in"
+- "Sign me up", "Subscribe", "I want to try", "Let's proceed"
+- Express interest in products/services after asking about them
+
+Be confident in AI capabilities! Only escalate when:
 - Customer explicitly asks for "human", "agent", "representative", "speak to someone", etc.
 - Specific order issues with order numbers/IDs that need account access
 - Technical problems requiring system access
 - Billing/payment disputes requiring account verification
 - Legal complaints or threats
 
-DO NOT escalate for:
-- General questions about business, services, pricing, hours
-- Product information requests
-- How-to questions
-- General complaints (try to help first)
-- Simple troubleshooting
-- Basic customer service inquiries
+For order intent detection, look for:
+- Purchase keywords (buy, order, purchase, book, reserve, subscribe)
+- Interest expressions (interested, want, need, would like)
+- Pricing inquiries followed by positive responses
+- Decision-making language (yes, proceed, let's do it, sign me up)
 
-Default to "ai_response" or "get_context" - be helpful and confident!
+Default to "ai_response" or "process_order" - be helpful and proactive in sales!
 
 Conversation history (if any):
 {history_context}
@@ -133,7 +145,7 @@ Respond with your decision and reasoning."""
                 HumanMessage(content=f"Analyze this message: {message_text}")
             ])
 
-            # Parse the response - be more aggressive about AI handling
+            # Parse the response - be more aggressive about sales and AI handling
             content = response.content.lower()
             message_lower = message_text.lower()
 
@@ -143,12 +155,24 @@ Respond with your decision and reasoning."""
                 "customer service", "customer support", "live chat", "real person"
             ]
 
+            # Check for order intent keywords
+            order_keywords = [
+                "buy", "order", "purchase", "book", "reserve", "subscribe",
+                "interested", "want", "need", "would like", "i'll take",
+                "sign me up", "let's proceed", "proceed", "yes", "okay"
+            ]
+
             explicit_human_request = any(keyword in message_lower for keyword in human_keywords)
+            order_intent = any(keyword in message_lower for keyword in order_keywords) or "process_order" in content
 
             if explicit_human_request:
                 decision = "escalate"
                 needs_context = False
                 confidence_score = 0.9
+            elif order_intent:
+                decision = "process_order"
+                needs_context = True
+                confidence_score = 0.85
             elif "get_context" in content or any(word in message_lower for word in ["hours", "open", "closed", "location", "address", "services", "price", "cost", "about"]):
                 decision = "get_context"
                 needs_context = True
@@ -163,10 +187,11 @@ Respond with your decision and reasoning."""
                 "decision": decision,
                 "confidence_score": confidence_score,
                 "needs_business_context": needs_context,
-                "reasoning": response.content
+                "reasoning": response.content,
+                "order_intent": order_intent
             })
 
-            logger.info(f"Message analysis: {decision} (confidence: {confidence_score}) - Message: '{message_text[:50]}...'")
+            logger.info(f"Message analysis: {decision} (confidence: {confidence_score}) - Order intent: {order_intent} - Message: '{message_text[:50]}...'")
             return state
 
         except Exception as e:
@@ -176,7 +201,8 @@ Respond with your decision and reasoning."""
                 "decision": "ai_response",
                 "confidence_score": 0.5,
                 "needs_business_context": False,
-                "reasoning": f"Error during analysis, defaulting to AI response: {str(e)}"
+                "reasoning": f"Error during analysis, defaulting to AI response: {str(e)}",
+                "order_intent": False
             })
             return state
 
@@ -374,15 +400,19 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
         # Always route to get business context first since we need it for every response
         if decision == "escalate":
             return "escalate"
+        elif decision == "process_order":
+            return "process_order"
         else:
             return "ai_response"
 
     def route_after_balance_calc(self, state: AgentState) -> str:
         """Route after balance calculation"""
-        decision = state.get("decision", "escalate")
+        decision = state.get("decision", "ai_response")
 
         if decision == "escalate":
-            return "escalate_to_human"
+            return "escalate"
+        elif decision == "process_order":
+            return "process_order"
         else:
             return "generate_response"
 
@@ -534,7 +564,9 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                 confidence_score=0.0,
                 reasoning="",
                 balance_deduction_amount=0,
-                balance_deduction_reason=""
+                balance_deduction_reason="",
+                order_intent=False,
+                order_details=None
             )
 
             # Store conversation history separately to avoid serialization issues
@@ -600,3 +632,130 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
             return None
+
+    def process_order(self, state: AgentState) -> AgentState:
+        """Process an order based on the message details"""
+        try:
+            message_text = state["message_text"]
+            customer_phone = state["customer_phone"]
+            phone_number_id = state["phone_number_id"]
+            business_context = state.get("business_context") or {}
+            conversation_history = state.get("conversation_history", [])
+
+            logger.info(f"Processing order with message: {message_text}")
+
+            # Prepare conversation context
+            history_context = ""
+            if conversation_history:
+                recent_messages = conversation_history[-5:]
+                history_context = "\n".join([
+                    f"{'Customer' if msg.get('message_direction') == 'incoming' else 'Business'}: {msg.get('message_text', '')}"
+                    for msg in recent_messages
+                ])
+
+            # Use LLM to intelligently extract order details
+            business_name = business_context.get("business_name", "Business")
+            products = business_context.get("products", [])
+
+            products_info = ""
+            if products:
+                products_info = "Available products/services:\n"
+                for product in products:
+                    name = product.get("name", "")
+                    desc = product.get("description", "")
+                    price = product.get("price", "")
+                    products_info += f"- {name}: {desc} ({price})\n"
+
+            system_prompt = f"""You are processing an order/reservation request for {business_name}.
+
+Customer message: {message_text}
+
+{products_info}
+
+Recent conversation:
+{history_context}
+
+Extract the following order details from the customer's message:
+1. What product/service they want (be specific)
+2. Quantity or duration requested
+3. Any special requirements or preferences
+4. Urgency level (urgent, normal, flexible)
+
+Provide a professional order confirmation response that:
+- Confirms what they want to order/book
+- Mentions the next steps (business owner will contact them)
+- Is warm and professional
+- Uses appropriate language (Indonesian/English based on customer's language)
+
+Format your response as:
+ORDER_DETAILS: [extracted details]
+RESPONSE: [confirmation message to customer]"""
+
+            response = self.llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"Process this order request: {message_text}")
+            ])
+
+            # Parse LLM response
+            llm_response = response.content
+            order_details = "Order request received"
+            customer_response = "Thank you for your interest! We'll contact you shortly to confirm the details."
+
+            if "ORDER_DETAILS:" in llm_response and "RESPONSE:" in llm_response:
+                parts = llm_response.split("RESPONSE:")
+                if len(parts) == 2:
+                    order_details = parts[0].replace("ORDER_DETAILS:", "").strip()
+                    customer_response = parts[1].strip()
+            else:
+                order_details = llm_response
+                # Generate a fallback response
+                if any(indonesian in message_text.lower() for indonesian in ["saya", "mau", "bisa", "ingin"]):
+                    customer_response = "Terima kasih atas minat Anda! 🎉\n\nKami telah menerima permintaan order/reservasi Anda. Tim kami akan segera menghubungi Anda untuk konfirmasi detail lebih lanjut.\n\nTerima kasih! 🙏"
+                else:
+                    customer_response = "Thank you for your interest! 🎉\n\nWe've received your order/reservation request. Our team will contact you shortly to confirm the details.\n\nThank you! 🙏"
+
+            state["response_message"] = customer_response
+            state["order_details"] = order_details
+            state["order_intent"] = True
+
+            logger.info(f"Order processed - Details: {order_details[:100]}...")
+
+            # Send notifications to business owner
+            escalation_settings = business_context.get("escalation_settings", {})
+            notification_method = escalation_settings.get("method", "email")
+
+            if escalation_settings.get("enabled", False):
+                try:
+                    # Send email notification
+                    if notification_method in ["email", "both"]:
+                        email_sent = self.email_service.send_order_notification(
+                            business_context, customer_phone, order_details, message_text
+                        )
+                        if email_sent:
+                            logger.info("Order notification email sent successfully")
+
+                    # Send WhatsApp notification
+                    if notification_method in ["whatsapp", "both"]:
+                        business_phone = escalation_settings.get("whatsappNumber")
+                        if business_phone:
+                            whatsapp_sent = self.email_service.send_whatsapp_notification(
+                                self.whatsapp_service, phone_number_id, business_phone,
+                                customer_phone, order_details
+                            )
+                            if whatsapp_sent:
+                                logger.info("Order notification WhatsApp sent successfully")
+
+                except Exception as e:
+                    logger.error(f"Error sending order notifications: {str(e)}")
+
+            return state
+
+        except Exception as e:
+            logger.error(f"Error processing order: {str(e)}")
+            # Fallback response
+            if any(indonesian in state.get("message_text", "").lower() for indonesian in ["saya", "mau", "bisa", "ingin"]):
+                state["response_message"] = "Terima kasih atas pesan Anda! Kami telah menerima permintaan Anda dan akan segera menghubungi Anda."
+            else:
+                state["response_message"] = "Thank you for your message! We have received your request and will contact you shortly."
+            state["order_details"] = "Order request received"
+            return state

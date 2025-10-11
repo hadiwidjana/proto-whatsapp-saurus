@@ -10,3 +10,4 @@ pyjwt>=2.8.0
 cryptography>=41.0.0
 pydantic>=2.0.0
 typing-extensions>=4.8.0
+resend>=0.6.0

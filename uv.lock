@@ -825,6 +825,7 @@ dependencies = [
     { name = "pymongo" },
     { name = "python-dotenv" },
     { name = "requests" },
+    { name = "resend" },
     { name = "typing-extensions" },
 ]
 
@@ -841,6 +842,7 @@ requires-dist = [
     { name = "pymongo", specifier = ">=4.5.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
+    { name = "resend", specifier = ">=0.6.0" },
     { name = "typing-extensions", specifier = ">=4.8.0" },
 ]
 
@@ -1174,6 +1176,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f3/61/d7545dafb7ac2230c70d38d31cbfe4cc64f7144dc41f6e4e4b78ecd9f5bb/requests-toolbelt-1.0.0.tar.gz", hash = "sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6", size = 206888, upload-time = "2023-05-01T04:11:33.229Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl", hash = "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06", size = 54481, upload-time = "2023-05-01T04:11:28.427Z" },
+]
+
+[[package]]
+name = "resend"
+version = "2.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ff/22/3e940eee2e2ccca0a04dcf1c694efd9f615bea9b1104d1fa5ff35f379f3c/resend-2.16.0.tar.gz", hash = "sha256:2f00d1300aa26309291860c345bd796800ab4cd7a2ce76004b5be1d5a5f0af86", size = 16946, upload-time = "2025-10-08T13:00:34.328Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/06/c2c0b3aee1891e85e6ff35606739b8a8e5b94c0c25a95a5efa17437173ad/resend-2.16.0-py2.py3-none-any.whl", hash = "sha256:ae14dd6825a93c60483bd29d149b9ae7e0af8c3c686b694fb3158b51f7526447", size = 25571, upload-time = "2025-10-08T13:00:33.115Z" },
 ]
 
 [[package]]

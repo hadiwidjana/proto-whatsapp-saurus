@@ -3,6 +3,7 @@ import logging
 import requests
 from typing import Dict, Any, Optional
 from openai import OpenAI
+import resend
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,87 @@ class WhatsAppAPIService:
 
         except Exception as e:
             logger.error(f"Error sending WhatsApp template message: {str(e)}")
+            return False
+
+class EmailService:
+    def __init__(self):
+        self.resend_api_key = os.getenv('RESEND_API_KEY')
+        if self.resend_api_key:
+            resend.api_key = self.resend_api_key
+
+    def send_order_notification(self, business_details: Dict[str, Any], customer_phone: str,
+                              order_details: str, customer_message: str) -> bool:
+        """Send order/reservation notification email to business owner"""
+        try:
+            if not self.resend_api_key:
+                logger.warning("Resend API key not configured")
+                return False
+
+            escalation_settings = business_details.get('escalation_settings', {})
+            business_email = escalation_settings.get('email')
+            business_name = business_details.get('business_name', 'Your Business')
+
+            if not business_email:
+                logger.warning("No business email configured for notifications")
+                return False
+
+            subject = f"New Order/Reservation Request - {business_name}"
+
+            html_content = f"""
+            <h2>New Order/Reservation Request</h2>
+            <p><strong>Business:</strong> {business_name}</p>
+            <p><strong>Customer Phone:</strong> {customer_phone}</p>
+            <p><strong>Order Details:</strong></p>
+            <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0;">
+                {order_details.replace('\n', '<br>')}
+            </div>
+            <p><strong>Original Customer Message:</strong></p>
+            <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 10px 0;">
+                {customer_message}
+            </div>
+            <p>Please contact the customer to confirm the order/reservation details.</p>
+            <hr>
+            <p><small>This notification was sent automatically by Protosaurus.</small></p>
+            """
+
+            params = {
+                "from": "support@protosaurus.id",
+                "to": [business_email],
+                "subject": subject,
+                "html": html_content,
+            }
+
+            email = resend.Emails.send(params)
+            logger.info(f"Order notification email sent successfully to {business_email}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error sending order notification email: {str(e)}")
+            return False
+
+    def send_whatsapp_notification(self, whatsapp_service, phone_number_id: str,
+                                 business_phone: str, customer_phone: str,
+                                 order_details: str) -> bool:
+        """Send WhatsApp notification to business owner"""
+        try:
+            notification_message = f"""🔔 New Order/Reservation Request
+
+Customer: {customer_phone}
+
+Order Details:
+{order_details}
+
+Please contact the customer to confirm the details.
+
+- Protosaurus Auto-Notification"""
+
+            success = whatsapp_service.send_message(phone_number_id, business_phone, notification_message)
+            if success:
+                logger.info(f"Order notification WhatsApp sent to {business_phone}")
+            return success
+
+        except Exception as e:
+            logger.error(f"Error sending WhatsApp notification: {str(e)}")
             return False
 
 class AutoReplyService:
