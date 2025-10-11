@@ -17,6 +17,7 @@ class Database:
         self.collection = self.db.messages
         self.users_collection = self.db.users
         self.business_collection = self.db.business_details
+        self.balance_history_collection = self.db.balance_history
 
         self._create_indexes()
 
@@ -32,6 +33,10 @@ class Database:
             self.users_collection.create_index("whatsapp_phone_number_id")
 
             self.business_collection.create_index("user_id")
+
+            self.balance_history_collection.create_index("user_id")
+            self.balance_history_collection.create_index("created_at")
+            self.balance_history_collection.create_index([("user_id", 1), ("created_at", -1)])
         except Exception as e:
             logger.warning(f"Failed to create indexes: {str(e)}")
 
@@ -209,20 +214,37 @@ class Database:
             logger.error(f"Error saving outgoing message: {str(e)}")
             return False
 
+    def get_user_balance(self, user_id: str) -> int:
+        """Get current user balance from balance_history"""
+        try:
+            user_object_id = ObjectId(user_id)
+
+            # Get the latest balance entry from balance_history
+            latest_entry = self.balance_history_collection.find_one(
+                {"user_id": user_object_id},
+                sort=[("created_at", -1)]
+            )
+
+            return latest_entry.get("balance", 0) if latest_entry else 0
+        except Exception as e:
+            logger.error(f"Error getting user balance: {str(e)}")
+            return 0
+
     def deduct_user_balance(self, user_id: str, amount: int, reason: str = "AI response") -> Dict[str, Any]:
         """
-        Deduct balance from user account with validation
+        Deduct balance from user account using balance_history table
         Returns: {"success": bool, "new_balance": int, "message": str}
         """
         try:
             user_object_id = ObjectId(user_id)
 
-            # Get current user balance
+            # Verify user exists
             user = self.users_collection.find_one({"_id": user_object_id})
             if not user:
                 return {"success": False, "new_balance": 0, "message": "User not found"}
 
-            current_balance = user.get("balance", 0)
+            # Get current balance from balance_history
+            current_balance = self.get_user_balance(user_id)
 
             # Check if user has sufficient balance
             if current_balance < amount:
@@ -233,19 +255,22 @@ class Database:
                     "message": f"Insufficient balance. Current: {current_balance}, Required: {amount}"
                 }
 
-            # Deduct balance
+            # Calculate new balance after deduction
             new_balance = current_balance - amount
-            result = self.users_collection.update_one(
-                {"_id": user_object_id},
-                {
-                    "$set": {
-                        "balance": new_balance,
-                        "updated_at": datetime.now(timezone.utc)
-                    }
-                }
-            )
 
-            if result.modified_count > 0:
+            # Create balance history entry
+            balance_entry = {
+                "user_id": user_object_id,
+                "event": "deduction",
+                "amount": amount,
+                "balance": new_balance,
+                "created_at": datetime.now(timezone.utc)
+            }
+
+            # Insert the balance history record
+            result = self.balance_history_collection.insert_one(balance_entry)
+
+            if result.inserted_id:
                 logger.info(f"Balance deducted for user {user_id}: -{amount} (new balance: {new_balance})")
                 return {
                     "success": True,
@@ -253,20 +278,77 @@ class Database:
                     "message": f"Balance deducted: {amount}. New balance: {new_balance}"
                 }
             else:
-                return {"success": False, "new_balance": current_balance, "message": "Failed to update balance"}
+                return {"success": False, "new_balance": current_balance, "message": "Failed to record balance deduction"}
 
         except Exception as e:
             logger.error(f"Error deducting balance: {str(e)}")
             return {"success": False, "new_balance": 0, "message": f"Error: {str(e)}"}
 
-    def get_user_balance(self, user_id: str) -> int:
-        """Get current user balance"""
+    def add_user_balance(self, user_id: str, amount: int, reason: str = "Top up") -> Dict[str, Any]:
+        """
+        Add balance to user account using balance_history table
+        Returns: {"success": bool, "new_balance": int, "message": str}
+        """
         try:
-            user = self.users_collection.find_one({"_id": ObjectId(user_id)})
-            return user.get("balance", 0) if user else 0
+            user_object_id = ObjectId(user_id)
+
+            # Verify user exists
+            user = self.users_collection.find_one({"_id": user_object_id})
+            if not user:
+                return {"success": False, "new_balance": 0, "message": "User not found"}
+
+            # Get current balance from balance_history
+            current_balance = self.get_user_balance(user_id)
+
+            # Calculate new balance after addition
+            new_balance = current_balance + amount
+
+            # Create balance history entry
+            balance_entry = {
+                "user_id": user_object_id,
+                "event": "addition",
+                "amount": amount,
+                "balance": new_balance,
+                "created_at": datetime.now(timezone.utc)
+            }
+
+            # Insert the balance history record
+            result = self.balance_history_collection.insert_one(balance_entry)
+
+            if result.inserted_id:
+                logger.info(f"Balance added for user {user_id}: +{amount} (new balance: {new_balance})")
+                return {
+                    "success": True,
+                    "new_balance": new_balance,
+                    "message": f"Balance added: {amount}. New balance: {new_balance}"
+                }
+            else:
+                return {"success": False, "new_balance": current_balance, "message": "Failed to record balance addition"}
+
         except Exception as e:
-            logger.error(f"Error getting user balance: {str(e)}")
-            return 0
+            logger.error(f"Error adding balance: {str(e)}")
+            return {"success": False, "new_balance": 0, "message": f"Error: {str(e)}"}
+
+    def get_balance_history(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get balance history for a user with pagination"""
+        try:
+            user_object_id = ObjectId(user_id)
+
+            history = list(self.balance_history_collection.find(
+                {"user_id": user_object_id}
+            ).sort("created_at", -1).skip(offset).limit(limit))
+
+            # Convert ObjectId to string for JSON serialization
+            for entry in history:
+                if '_id' in entry:
+                    entry['_id'] = str(entry['_id'])
+                if 'user_id' in entry:
+                    entry['user_id'] = str(entry['user_id'])
+
+            return history
+        except Exception as e:
+            logger.error(f"Error getting balance history: {str(e)}")
+            return []
 
 def verify_jwt_token(f):
     @wraps(f)
