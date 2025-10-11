@@ -81,21 +81,6 @@ class WhatsAppAIAgent:
             message_text = state["message_text"]
             conversation_history = state.get("conversation_history", [])
 
-            # Log conversation history for debugging
-            logger.info(f"=== ANALYZE MESSAGE DEBUG ===")
-            logger.info(f"Current message: {message_text}")
-            logger.info(f"Conversation history length: {len(conversation_history)}")
-
-            if conversation_history:
-                logger.info("Conversation history details:")
-                for i, msg in enumerate(conversation_history[-5:]):  # Show last 5 messages
-                    direction = msg.get('message_direction', 'unknown')
-                    text = msg.get('message_text', '')
-                    timestamp = msg.get('created_at', '')
-                    logger.info(f"  [{i+1}] {direction}: {text[:100]}... (at {timestamp})")
-            else:
-                logger.info("No conversation history available")
-
             # Create context from conversation history
             history_context = ""
             if conversation_history:
@@ -221,21 +206,6 @@ Respond with your decision and reasoning."""
             message_text = state["message_text"]
             business_context = state.get("business_context") or {}
             conversation_history = state.get("conversation_history", [])
-
-            # Log conversation history for debugging in response generation
-            logger.info(f"=== GENERATE RESPONSE DEBUG ===")
-            logger.info(f"Current message: {message_text}")
-            logger.info(f"Conversation history length: {len(conversation_history)}")
-
-            if conversation_history:
-                logger.info("Conversation history details for response generation:")
-                for i, msg in enumerate(conversation_history[-10:]):  # Show last 10 messages
-                    direction = msg.get('message_direction', 'unknown')
-                    text = msg.get('message_text', '')
-                    timestamp = msg.get('created_at', '')
-                    logger.info(f"  [{i+1}] {direction}: {text[:100]}... (at {timestamp})")
-            else:
-                logger.info("No conversation history available for response generation")
 
             # Prepare business information
             business_info = ""
