@@ -81,6 +81,21 @@ class WhatsAppAIAgent:
             message_text = state["message_text"]
             conversation_history = state.get("conversation_history", [])
 
+            # Log conversation history for debugging
+            logger.info(f"=== ANALYZE MESSAGE DEBUG ===")
+            logger.info(f"Current message: {message_text}")
+            logger.info(f"Conversation history length: {len(conversation_history)}")
+
+            if conversation_history:
+                logger.info("Conversation history details:")
+                for i, msg in enumerate(conversation_history[-5:]):  # Show last 5 messages
+                    direction = msg.get('message_direction', 'unknown')
+                    text = msg.get('message_text', '')
+                    timestamp = msg.get('created_at', '')
+                    logger.info(f"  [{i+1}] {direction}: {text[:100]}... (at {timestamp})")
+            else:
+                logger.info("No conversation history available")
+
             # Create context from conversation history
             history_context = ""
             if conversation_history:
@@ -89,6 +104,10 @@ class WhatsAppAIAgent:
                     f"{'Customer' if msg.get('message_direction') == 'incoming' else 'Business'}: {msg.get('message_text', '')}"
                     for msg in recent_messages
                 ])
+
+                logger.info(f"History context for LLM:\n{history_context}")
+            else:
+                logger.info("No history context for LLM")
 
             system_prompt = """You are an AI assistant that analyzes customer messages to determine the best response strategy.
 
@@ -203,6 +222,21 @@ Respond with your decision and reasoning."""
             business_context = state.get("business_context") or {}
             conversation_history = state.get("conversation_history", [])
 
+            # Log conversation history for debugging in response generation
+            logger.info(f"=== GENERATE RESPONSE DEBUG ===")
+            logger.info(f"Current message: {message_text}")
+            logger.info(f"Conversation history length: {len(conversation_history)}")
+
+            if conversation_history:
+                logger.info("Conversation history details for response generation:")
+                for i, msg in enumerate(conversation_history[-10:]):  # Show last 10 messages
+                    direction = msg.get('message_direction', 'unknown')
+                    text = msg.get('message_text', '')
+                    timestamp = msg.get('created_at', '')
+                    logger.info(f"  [{i+1}] {direction}: {text[:100]}... (at {timestamp})")
+            else:
+                logger.info("No conversation history available for response generation")
+
             # Prepare business information
             business_info = ""
             business_name = "our business"
@@ -288,11 +322,15 @@ Opening Hours:
             # Prepare conversation context
             history_context = ""
             if conversation_history:
-                recent_messages = conversation_history[-3:]
+                recent_messages = conversation_history[-10:]
                 history_context = "Recent conversation:\n" + "\n".join([
                     f"{'Customer' if msg.get('message_direction') == 'incoming' else 'Business'}: {msg.get('message_text', '')}"
                     for msg in recent_messages
                 ])
+
+                logger.info(f"History context being sent to LLM for response generation:\n{history_context}")
+            else:
+                logger.info("No history context being sent to LLM for response generation")
 
             # Get default language for culturally appropriate responses
             default_language = business_context.get("default_language", "en")
@@ -309,6 +347,7 @@ Your role:
 - Use the business information provided to answer customer questions accurately
 - If customers ask about products, pricing, payment methods, or how to order, use the specific information provided
 - Always maintain a helpful and conversational tone
+- Use the conversation history to provide contextual responses that reference previous interactions when relevant
 {language_context}
 
 {business_info}
@@ -317,7 +356,9 @@ Your role:
 
 Current customer message: {message_text}
 
-Provide a helpful response using the business information above. Keep it friendly and conversational."""
+Provide a helpful response using the business information above and referencing the conversation history when relevant. Keep it friendly and conversational."""
+
+            logger.info(f"Full system prompt being sent to LLM (truncated):\n{system_prompt[:500]}...")
 
             response = self.llm.invoke([
                 SystemMessage(content=system_prompt),
@@ -325,7 +366,7 @@ Provide a helpful response using the business information above. Keep it friendl
             ])
 
             state["response_message"] = response.content
-            logger.info("AI response generated successfully")
+            logger.info(f"AI response generated: {response.content[:100]}...")
             return state
 
         except Exception as e:
