@@ -350,6 +350,30 @@ class Database:
             logger.error(f"Error getting balance history: {str(e)}")
             return []
 
+    def update_whatsapp_auto_reply_enabled(self, user_id: str, enabled: bool) -> bool:
+        """
+        Update user's whatsapp_auto_reply_enabled setting
+        Returns: True if successful, False otherwise
+        """
+        try:
+            user_object_id = ObjectId(user_id)
+
+            result = self.users_collection.update_one(
+                {"_id": user_object_id},
+                {"$set": {"whatsapp_auto_reply_enabled": enabled}}
+            )
+
+            if result.modified_count > 0:
+                logger.info(f"Updated whatsapp_auto_reply_enabled to {enabled} for user {user_id}")
+                return True
+            else:
+                logger.warning(f"No changes made to whatsapp_auto_reply_enabled for user {user_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error updating whatsapp_auto_reply_enabled: {str(e)}")
+            return False
+
 def verify_jwt_token(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):

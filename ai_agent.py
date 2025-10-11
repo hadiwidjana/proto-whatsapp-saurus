@@ -387,10 +387,10 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             # Base deduction amounts (in rupiah)
             if decision == "escalate":
                 # Even escalation now gets business context + routing effort
-                base_amount = 25  # Minimal cost for escalation with context
+                base_amount = 0  # Minimal cost for escalation with context
             else:
                 # All AI responses now include business context retrieval + AI processing
-                base_amount = 75  # Standard cost for AI response with business context
+                base_amount = 50  # Standard cost for AI response with business context
 
             # Complexity adjustments based on message length
             message_length = len(message_text)
@@ -535,31 +535,16 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
 
             if not balance_result["success"]:
                 logger.warning(f"Balance deduction failed: {balance_result['message']}")
-                # Send a balance warning message instead of the original response
+
+                # Check if it's an insufficient balance issue
                 if "insufficient balance" in balance_result["message"].lower():
-                    insufficient_balance_message = f"""⚠️ Insufficient Balance Alert
+                    # Disable auto-reply for this user
+                    self.db.update_whatsapp_auto_reply_enabled(user_id, False)
+                    logger.info(f"Auto-reply disabled for user {user_id} due to insufficient balance")
 
-Your current balance ({balance_result['new_balance']} rupiah) is insufficient to process this request (requires {deduction_amount} rupiah).
-
-Please top up your account to continue using our AI customer service.
-
-For assistance with topping up, please contact our support team."""
-
-                    # Try to send the balance warning
-                    balance_warning_sent = self.whatsapp_service.send_message(
-                        phone_number_id, customer_phone, insufficient_balance_message
-                    )
-
-                    if balance_warning_sent:
-                        self.db.save_outgoing_message(
-                            phone_number_id,
-                            customer_phone,
-                            insufficient_balance_message,
-                            cost_amount=0,
-                            cost_reason="Insufficient balance warning (no charge)"
-                        )
-                        logger.info(f"Insufficient balance warning sent to {customer_phone}")
-                        return insufficient_balance_message
+                    # DO NOT send any message when balance is insufficient
+                    # Simply return None to indicate no response should be sent
+                    return None
 
                 return None
 
