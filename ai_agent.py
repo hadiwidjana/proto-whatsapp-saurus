@@ -498,6 +498,17 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             )
             conversation_history = conversation_history_result.get('messages', [])
 
+            # Convert conversation history to serializable format
+            serializable_history = []
+            for msg in conversation_history:
+                serializable_msg = {
+                    'message_text': msg.get('message_text', ''),
+                    'message_direction': msg.get('message_direction', ''),
+                    'created_at': str(msg.get('created_at', '')),
+                    'message_type': msg.get('message_type', 'text')
+                }
+                serializable_history.append(serializable_msg)
+
             # Create initial state with serializable data only
             initial_state = AgentState(
                 message_text=message_text,
@@ -505,7 +516,7 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                 phone_number_id=phone_number_id,
                 user_id=user_id,
                 business_context=None,
-                conversation_history=[],  # Simplified to avoid serialization issues
+                conversation_history=serializable_history,  # Now properly including conversation history
                 decision=None,
                 response_message=None,
                 needs_business_context=False,
