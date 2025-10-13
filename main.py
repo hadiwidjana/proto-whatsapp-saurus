@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from models import Database, verify_jwt_token
 from services import OpenAIService, WhatsAppAPIService, AutoReplyService
 from ai_agent import WhatsAppAIAgent
-from queue_manager import queue_manager
 
 load_dotenv()
 
@@ -90,61 +89,37 @@ def webhook_receive():
         logger.info(f"\n\nWebhook received {timestamp}\n")
         logger.info(json.dumps(data, indent=2))
 
-        # Check if this is a WhatsApp message
-        if data.get('object') == 'whatsapp_business_account':
+        # Store message data in database
+        if db and data.get('object') == 'whatsapp_business_account':
+            try:
+                db.save_message(data)
+                logger.info("Message successfully stored in database")
 
-            # Try to use Redis queue first for high-throughput processing
-            if queue_manager.is_available():
-                try:
-                    # Determine message priority based on content
-                    priority = determine_message_priority(data)
+                # Process with AI agent if available
+                if ai_agent:
+                    try:
+                        # Run the async AI agent processing
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        response = loop.run_until_complete(ai_agent.process_message(data))
+                        loop.close()
 
-                    # Enqueue the message for background processing
-                    job_id = queue_manager.enqueue_message(data, priority=priority)
+                        if response:
+                            logger.info(f"AI agent processed message successfully: {response[:100]}...")
+                        else:
+                            logger.info("AI agent determined no response needed")
+                    except Exception as ai_error:
+                        logger.error(f"AI agent processing failed: {str(ai_error)}")
 
-                    if job_id:
-                        logger.info(f"Message enqueued successfully with job ID: {job_id}, priority: {priority}")
-                        return '', 200
-                    else:
-                        logger.warning("Failed to enqueue message, falling back to synchronous processing")
+                        # Fallback to basic auto-reply
+                        if auto_reply_service:
+                            try:
+                                auto_reply_service.process_and_reply(data)
+                            except Exception as fallback_error:
+                                logger.error(f"Fallback auto-reply failed: {str(fallback_error)}")
 
-                except Exception as queue_error:
-                    logger.error(f"Queue processing failed: {str(queue_error)}, falling back to synchronous processing")
-
-            # Fallback to synchronous processing if queue is not available
-            logger.info("Processing message synchronously (queue not available)")
-
-            # Store message data in database
-            if db:
-                try:
-                    db.save_message(data)
-                    logger.info("Message successfully stored in database")
-
-                    # Process with AI agent if available
-                    if ai_agent:
-                        try:
-                            # Run the async AI agent processing
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            response = loop.run_until_complete(ai_agent.process_message(data))
-                            loop.close()
-
-                            if response:
-                                logger.info(f"AI agent processed message successfully: {response[:100]}...")
-                            else:
-                                logger.info("AI agent determined no response needed")
-                        except Exception as ai_error:
-                            logger.error(f"AI agent processing failed: {str(ai_error)}")
-
-                            # Fallback to basic auto-reply
-                            if auto_reply_service:
-                                try:
-                                    auto_reply_service.process_and_reply(data)
-                                except Exception as fallback_error:
-                                    logger.error(f"Fallback auto-reply failed: {str(fallback_error)}")
-
-                except Exception as db_error:
-                    logger.error(f"Failed to store message in database: {str(db_error)}")
+            except Exception as db_error:
+                logger.error(f"Failed to store message in database: {str(db_error)}")
 
         return '', 200
 
@@ -152,125 +127,21 @@ def webhook_receive():
         logger.error(f"Error processing webhook: {str(e)}")
         return '', 500
 
-def determine_message_priority(data: dict) -> str:
-    """
-    Determine message priority based on content and context
-
-    Returns:
-        'high', 'normal', or 'low'
-    """
-    try:
-        # Extract message content
-        for entry in data.get('entry', []):
-            for change in entry.get('changes', []):
-                if change.get('field') == 'messages':
-                    messages = change.get('value', {}).get('messages', [])
-
-                    for message in messages:
-                        if message.get('type') == 'text':
-                            text = message.get('text', {}).get('body', '').lower()
-
-                            # High priority keywords
-                            high_priority_keywords = [
-                                'urgent', 'emergency', 'asap', 'immediately',
-                                'help', 'problem', 'issue', 'broken', 'not working',
-                                'order', 'purchase', 'buy', 'payment', 'billing'
-                            ]
-
-                            # Low priority keywords
-                            low_priority_keywords = [
-                                'info', 'information', 'hours', 'location',
-                                'about', 'general', 'hello', 'hi', 'hey'
-                            ]
-
-                            # Check for high priority
-                            if any(keyword in text for keyword in high_priority_keywords):
-                                return 'high'
-
-                            # Check for low priority
-                            if any(keyword in text for keyword in low_priority_keywords):
-                                return 'low'
-
-                            # Check message length (longer messages might be more complex)
-                            if len(text) > 200:
-                                return 'high'
-                            elif len(text) < 20:
-                                return 'low'
-
-                            break
-                    break
-
-        # Default to normal priority
-        return 'normal'
-
-    except Exception as e:
-        logger.error(f"Error determining message priority: {str(e)}")
-        return 'normal'
-
 @app.route('/health', methods=['GET'])
 def health_check():
-    queue_stats = queue_manager.get_queue_stats()
-
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'service': 'whatsapp-webhook',
-        'queue': queue_stats
+        'service': 'whatsapp-webhook'
     }), 200
 
-@app.route('/api/queue/stats', methods=['GET'])
-@verify_jwt_token
-def get_queue_stats():
-    """Get detailed queue statistics"""
-    try:
-        stats = queue_manager.get_queue_stats()
-        return jsonify({
-            'success': True,
-            'data': stats
-        }), 200
-    except Exception as e:
-        logger.error(f"Error getting queue stats: {str(e)}")
-        return jsonify({'error': 'Failed to get queue stats'}), 500
+@app.errorhandler(404)
+def not_found(error):
+    return '', 404
 
-@app.route('/api/queue/clear-failed', methods=['POST'])
-@verify_jwt_token
-def clear_failed_jobs():
-    """Clear and requeue failed jobs"""
-    try:
-        success = queue_manager.clear_failed_jobs()
-        if success:
-            return jsonify({
-                'success': True,
-                'message': 'Failed jobs cleared and requeued'
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Failed to clear failed jobs'
-            }), 500
-    except Exception as e:
-        logger.error(f"Error clearing failed jobs: {str(e)}")
-        return jsonify({'error': 'Failed to clear failed jobs'}), 500
-
-@app.route('/api/queue/job/<job_id>', methods=['GET'])
-@verify_jwt_token
-def get_job_status(job_id):
-    """Get status of a specific job"""
-    try:
-        job_status = queue_manager.get_job_status(job_id)
-        if job_status:
-            return jsonify({
-                'success': True,
-                'data': job_status
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Job not found'
-            }), 404
-    except Exception as e:
-        logger.error(f"Error getting job status: {str(e)}")
-        return jsonify({'error': 'Failed to get job status'}), 500
+@app.errorhandler(500)
+def internal_error(error):
+    return '', 500
 
 @app.route('/api/customers', methods=['GET'])
 @verify_jwt_token

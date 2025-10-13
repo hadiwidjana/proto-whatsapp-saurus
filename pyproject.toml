@@ -20,8 +20,6 @@ dependencies = [
     "pydantic>=2.0.0",
     "typing-extensions>=4.8.0",
     "resend>=0.6.0",
-    "redis>=5.0.0",
-    "rq>=1.15.0",
 ]
 
 [tool.setuptools]
