@@ -686,6 +686,7 @@ Provide a professional order confirmation response that:
 - Mentions the next steps (business owner will contact them)
 - Is warm and professional
 - Uses appropriate language (Indonesian/English based on customer's language)
+{language_instruction}
 
 Format your response as:
 ORDER_DETAILS: [extracted details]
