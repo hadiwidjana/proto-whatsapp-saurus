@@ -18,6 +18,7 @@ class Database:
         self.users_collection = self.db.users
         self.business_collection = self.db.business_details
         self.balance_history_collection = self.db.balance_history
+        self.ai_configs_collection = self.db.ai_configs
 
         self._create_indexes()
 
@@ -373,6 +374,32 @@ class Database:
         except Exception as e:
             logger.error(f"Error updating whatsapp_auto_reply_enabled: {str(e)}")
             return False
+
+    def get_ai_config(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get AI configuration for a specific user
+        Returns: AI config dict or None if not found
+        """
+        try:
+            user_object_id = ObjectId(user_id)
+
+            ai_config = self.ai_configs_collection.find_one({'user_id': user_object_id})
+
+            if ai_config:
+                if '_id' in ai_config:
+                    ai_config['_id'] = str(ai_config['_id'])
+                if 'user_id' in ai_config:
+                    ai_config['user_id'] = str(ai_config['user_id'])
+
+                logger.info(f"AI config retrieved for user {user_id}")
+                return ai_config
+            else:
+                logger.info(f"No AI config found for user {user_id}, using defaults")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting AI config: {str(e)}")
+            return None
 
 def verify_jwt_token(f):
     @wraps(f)

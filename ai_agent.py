@@ -9,6 +9,7 @@ from services import EmailService
 
 logger = logging.getLogger(__name__)
 
+
 class AgentState(TypedDict):
     message_text: str
     customer_phone: str
@@ -16,7 +17,7 @@ class AgentState(TypedDict):
     user_id: str
     business_context: Optional[Dict[str, Any]]
     conversation_history: List[Dict[str, Any]]
-    decision: Optional[str]  # "ai_response", "human_required", "escalate", "process_order"
+    decision: Optional[str]
     response_message: Optional[str]
     needs_business_context: bool
     confidence_score: float
@@ -25,17 +26,19 @@ class AgentState(TypedDict):
     balance_deduction_reason: str
     order_intent: bool
     order_details: Optional[str]
+    ai_config: Optional[Dict[str, Any]]
+
 
 class WhatsAppAIAgent:
     def __init__(self, db, whatsapp_service):
         self.db = db
         self.whatsapp_service = whatsapp_service
         self.email_service = EmailService()
-        self.llm = ChatOpenAI(
-            model="gpt-4",
-            temperature=0.3,
-            api_key=os.getenv('OPENAI_API_KEY')
-        )
+
+        self.default_model = "gpt-4"
+        self.default_temperature = 0.3
+
+        self.llm = None
 
         # Create the workflow graph
         workflow = StateGraph(AgentState)
@@ -62,12 +65,9 @@ class WhatsAppAIAgent:
             }
         )
 
-        workflow.add_edge("get_business_context", "calculate_balance")
-
-        # Add conditional edge after balance calculation for order processing
         workflow.add_conditional_edges(
-            "calculate_balance",
-            self.route_after_balance_calc,
+            "get_business_context",
+            self.route_after_context,
             {
                 "generate_response": "generate_response",
                 "escalate": "escalate_to_human",
@@ -75,24 +75,62 @@ class WhatsAppAIAgent:
             }
         )
 
-        workflow.add_edge("generate_response", END)
-        workflow.add_edge("escalate_to_human", END)
-        workflow.add_edge("process_order", END)
+        workflow.add_edge("generate_response", "calculate_balance")
+        workflow.add_edge("escalate_to_human", "calculate_balance")
+        workflow.add_edge("process_order", "calculate_balance")
+        workflow.add_edge("calculate_balance", END)
 
         # Compile the graph
         memory = MemorySaver()
         self.app = workflow.compile(checkpointer=memory)
+
+    def _get_llm_for_config(self, ai_config: Optional[Dict[str, Any]]) -> ChatOpenAI:
+        """Get or create LLM instance based on AI configuration"""
+        model = self.default_model
+        temperature = self.default_temperature
+
+        if ai_config:
+            model = ai_config.get('model', self.default_model)
+            creativity = ai_config.get('creativity', 2)
+            temperature = creativity / 10.0
+
+        return ChatOpenAI(
+            model=model,
+            temperature=temperature,
+            api_key=os.getenv('OPENAI_API_KEY')
+        )
+
+    def _get_formality_context(self, formality: int) -> str:
+        """Convert formality level (1-3) to context string"""
+        if formality == 1:
+            return "Use casual, friendly language. Be conversational and warm."
+        elif formality == 3:
+            return "Use formal, professional language. Be polite and respectful."
+        else:
+            return "Use balanced, professional yet friendly language."
+
+    def _get_max_tokens_from_reply_length(self, max_reply_length: int) -> int:
+        """Convert maxReplyLength setting to token limit"""
+        length_map = {
+            1: 150,
+            2: 300,
+            3: 500,
+            4: 800
+        }
+        return length_map.get(max_reply_length, 300)
 
     def analyze_message(self, state: AgentState) -> AgentState:
         """Analyze the incoming message to determine the best course of action"""
         try:
             message_text = state["message_text"]
             conversation_history = state.get("conversation_history", [])
+            ai_config = state.get("ai_config")
 
-            # Create context from conversation history
+            llm = self._get_llm_for_config(ai_config)
+
             history_context = ""
             if conversation_history:
-                recent_messages = conversation_history[-5:]  # Last 5 messages
+                recent_messages = conversation_history[-5:]
                 history_context = "\n".join([
                     f"{'Customer' if msg.get('message_direction') == 'incoming' else 'Business'}: {msg.get('message_text', '')}"
                     for msg in recent_messages
@@ -137,7 +175,7 @@ Current message: {message_text}
 
 Respond with your decision and reasoning."""
 
-            response = self.llm.invoke([
+            response = llm.invoke([
                 SystemMessage(content=system_prompt.format(
                     history_context=history_context,
                     message_text=message_text
@@ -145,17 +183,14 @@ Respond with your decision and reasoning."""
                 HumanMessage(content=f"Analyze this message: {message_text}")
             ])
 
-            # Parse the response - be more aggressive about sales and AI handling
             content = response.content.lower()
             message_lower = message_text.lower()
 
-            # Check for explicit human requests
             human_keywords = [
                 "human", "agent", "representative", "speak to someone", "talk to someone",
                 "customer service", "customer support", "live chat", "real person"
             ]
 
-            # Check for order intent keywords
             order_keywords = [
                 "buy", "order", "purchase", "book", "reserve", "subscribe",
                 "interested", "want", "need", "would like", "i'll take",
@@ -173,12 +208,13 @@ Respond with your decision and reasoning."""
                 decision = "process_order"
                 needs_context = True
                 confidence_score = 0.85
-            elif "get_context" in content or any(word in message_lower for word in ["hours", "open", "closed", "location", "address", "services", "price", "cost", "about"]):
+            elif "get_context" in content or any(word in message_lower for word in
+                                                 ["hours", "open", "closed", "location", "address", "services", "price",
+                                                  "cost", "about"]):
                 decision = "get_context"
                 needs_context = True
                 confidence_score = 0.8
             else:
-                # Default to AI response for most cases
                 decision = "ai_response"
                 needs_context = False
                 confidence_score = 0.8
@@ -191,12 +227,12 @@ Respond with your decision and reasoning."""
                 "order_intent": order_intent
             })
 
-            logger.info(f"Message analysis: {decision} (confidence: {confidence_score}) - Order intent: {order_intent} - Message: '{message_text[:50]}...'")
+            logger.info(
+                f"Message analysis: {decision} (confidence: {confidence_score}) - Order intent: {order_intent} - Message: '{message_text[:50]}...'")
             return state
 
         except Exception as e:
             logger.error(f"Error analyzing message: {str(e)}")
-            # Default to AI response instead of escalation on error
             state.update({
                 "decision": "ai_response",
                 "confidence_score": 0.5,
@@ -232,8 +268,10 @@ Respond with your decision and reasoning."""
             message_text = state["message_text"]
             business_context = state.get("business_context") or {}
             conversation_history = state.get("conversation_history", [])
+            ai_config = state.get("ai_config")
 
-            # Prepare business information
+            llm = self._get_llm_for_config(ai_config)
+
             business_info = ""
             business_name = "our business"
 
@@ -247,7 +285,6 @@ Respond with your decision and reasoning."""
                 pricing_model = business_context.get("pricing_model", "")
                 min_order_value = business_context.get("min_order_value", "")
 
-                # Opening hours
                 opening_hours = business_context.get("opening_hours", {})
                 hours_text = ""
                 if opening_hours:
@@ -255,7 +292,6 @@ Respond with your decision and reasoning."""
                         if not times.get("closed", False):
                             hours_text += f"{day.capitalize()}: {times.get('open', '')} - {times.get('close', '')}\n"
 
-                # Products/Services
                 products = business_context.get("products", [])
                 products_text = ""
                 if products:
@@ -272,28 +308,24 @@ Respond with your decision and reasoning."""
                             products_text += f" [Category: {category}]"
                         products_text += "\n"
 
-                # Payment methods
                 accepted_payments = business_context.get("accepted_payments", [])
                 payments_text = ""
                 if accepted_payments:
                     payments_text = f"\nAccepted Payment Methods: {', '.join(accepted_payments)}"
 
-                # How to order
                 how_to_order = business_context.get("how_to_order", "")
                 order_text = ""
                 if how_to_order:
                     order_text = f"\nHow to Order:\n{how_to_order}"
 
-                # FAQs
                 faqs = business_context.get("faqs", [])
                 faq_text = ""
                 if faqs and faqs[0].get("question"):
                     faq_text = "\nFrequently Asked Questions:\n"
-                    for faq in faqs:  # Show up to 5 FAQs
+                    for faq in faqs:
                         if faq.get("question") and faq.get("answer"):
                             faq_text += f"Q: {faq['question']}\nA: {faq['answer']}\n\n"
 
-                # Build comprehensive business info
                 business_info = f"""
 Business Information:
 - Name: {business_name}
@@ -315,7 +347,6 @@ Opening Hours:
             else:
                 business_info = "Business information not currently available."
 
-            # Prepare conversation context
             history_context = ""
             if conversation_history:
                 recent_messages = conversation_history[-10:]
@@ -328,13 +359,20 @@ Opening Hours:
             else:
                 logger.info("No history context being sent to LLM for response generation")
 
-            # Get default language for culturally appropriate responses
             default_language = business_context.get("default_language", "en")
             language_context = ""
             if default_language == "id":
                 language_context = "Note: This business primarily serves Indonesian customers. Use friendly, professional Indonesian when appropriate, but English is also acceptable."
 
-            system_prompt = f"""You are a helpful customer service AI assistant for {business_name}. 
+            formality_context = ""
+            if ai_config and ai_config.get('formality'):
+                formality_context = self._get_formality_context(ai_config.get('formality', 2))
+
+            if ai_config and ai_config.get('systemPrompt'):
+                system_prompt = ai_config.get('systemPrompt')
+                system_prompt += f"\n\n{business_info}\n\n{history_context}\n\nCurrent customer message: {message_text}\n\nProvide a helpful response using the business information above."
+            else:
+                system_prompt = f"""You are a helpful customer service AI assistant for {business_name}. 
 
 Your role:
 - Provide friendly, professional responses
@@ -345,6 +383,7 @@ Your role:
 - Always maintain a helpful and conversational tone
 - Use the conversation history to provide contextual responses that reference previous interactions when relevant
 {language_context}
+{formality_context}
 
 {business_info}
 
@@ -356,10 +395,19 @@ Provide a helpful response using the business information above and referencing 
 
             logger.info(f"Full system prompt being sent to LLM (truncated):\n{system_prompt[:500]}...")
 
-            response = self.llm.invoke([
+            max_tokens = None
+            if ai_config and ai_config.get('maxReplyLength'):
+                max_tokens = self._get_max_tokens_from_reply_length(ai_config.get('maxReplyLength', 2))
+
+            messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=message_text)
-            ])
+            ]
+
+            if max_tokens:
+                response = llm.invoke(messages, max_tokens=max_tokens)
+            else:
+                response = llm.invoke(messages)
 
             state["response_message"] = response.content
             logger.info(f"AI response generated: {response.content[:100]}...")
@@ -367,7 +415,6 @@ Provide a helpful response using the business information above and referencing 
 
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
-            # Provide a simple fallback response for basic greetings
             message_lower = state.get("message_text", "").lower()
             if any(greeting in message_lower for greeting in ["hi", "hello", "hey", "good morning", "good afternoon"]):
                 state["response_message"] = "Hello! 👋 Thanks for reaching out. How can I help you today?"
@@ -405,8 +452,8 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
         else:
             return "ai_response"
 
-    def route_after_balance_calc(self, state: AgentState) -> str:
-        """Route after balance calculation"""
+    def route_after_context(self, state: AgentState) -> str:
+        """Route after context retrieval"""
         decision = state.get("decision", "ai_response")
 
         if decision == "escalate":
@@ -417,83 +464,54 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             return "generate_response"
 
     def calculate_balance_deduction(self, state: AgentState) -> AgentState:
-        """Calculate balance deduction based on effort required for response"""
+        """Calculate balance deduction based on AI model and response length"""
         try:
             decision = state.get("decision", "ai_response")
-            message_text = state.get("message_text", "")
-            confidence_score = state.get("confidence_score", 0.5)
-            business_context = state.get("business_context", {})
+            response_message = state.get("response_message", "")
+            ai_config = state.get("ai_config")
 
-            # Updated pricing model - business context is always retrieved
-            # Base deduction amounts (in rupiah)
+            model_pricing = {
+                "gpt-5": 100,
+                "gpt-5-mini": 20,
+                "gpt-5-nano": 4,
+                "gpt-4.1": 120,
+                "gpt-4o": 200,
+                "gpt-4o-mini": 24,
+                "gpt-3.5-turbo": 15,
+            }
+
+            default_model = self.default_model
+            model_name = default_model
+
+            if ai_config and ai_config.get('model'):
+                model_name = ai_config.get('model')
+
+            base_cost = model_pricing.get(model_name, 50)
+
             if decision == "escalate":
-                # Even escalation now gets business context + routing effort
-                base_amount = 0  # Minimal cost for escalation with context
+                final_amount = 0
+                reason = "Message escalation (no AI processing)"
             else:
-                # All AI responses now include business context retrieval + AI processing
-                base_amount = 50  # Standard cost for AI response with business context
+                word_count = len(response_message.split()) if response_message else 0
 
-            # Complexity adjustments based on message length
-            message_length = len(message_text)
-            complexity_multiplier = 1.0
+                if word_count <= 100:
+                    final_amount = base_cost
+                else:
+                    extra_words = word_count - 100
+                    additional_cost = int((extra_words / 100) * base_cost)
+                    final_amount = base_cost + additional_cost
 
-            if message_length > 300:
-                complexity_multiplier = 1.4  # Very long messages
-            elif message_length > 200:
-                complexity_multiplier = 1.25  # Long messages
-            elif message_length > 100:
-                complexity_multiplier = 1.1   # Medium messages
-
-            # Confidence adjustment (lower confidence = more LLM processing effort)
-            confidence_multiplier = 1.0
-            if confidence_score < 0.5:
-                confidence_multiplier = 1.3  # Much more effort for low confidence
-            elif confidence_score < 0.7:
-                confidence_multiplier = 1.15  # Slightly more effort
-
-            # Business context richness bonus (more context = higher value)
-            context_multiplier = 1.0
-            if business_context:
-                context_features = 0
-                if business_context.get("business_name"):
-                    context_features += 1
-                if business_context.get("opening_hours"):
-                    context_features += 1
-                if business_context.get("faqs") and len(business_context.get("faqs", [])) > 0:
-                    context_features += 1
-                if business_context.get("description"):
-                    context_features += 1
-
-                # More complete business context = slightly higher cost (more valuable response)
-                if context_features >= 3:
-                    context_multiplier = 1.2
-                elif context_features >= 2:
-                    context_multiplier = 1.1
-
-            # Calculate final amount
-            final_amount = int(base_amount * complexity_multiplier * confidence_multiplier * context_multiplier)
-
-            # Ensure amount is within reasonable bounds (25-200 rupiah)
-            final_amount = max(25, min(200, final_amount))
-
-            # Updated reason descriptions
-            if decision == "escalate":
-                reason = "Message escalation with business context lookup"
-            else:
-                reason = "AI response with business context retrieval and processing"
+                reason = f"AI response using {model_name} ({word_count} words)"
 
             state["balance_deduction_amount"] = final_amount
             state["balance_deduction_reason"] = reason
 
-            logger.info(f"Balance deduction calculated: {final_amount} rupiah for {decision} "
-                       f"(complexity: {complexity_multiplier:.2f}, confidence: {confidence_multiplier:.2f}, "
-                       f"context: {context_multiplier:.2f})")
+            logger.info(f"Balance deduction calculated: {final_amount} IDR for {decision} using {model_name}")
 
             return state
 
         except Exception as e:
             logger.error(f"Error calculating balance deduction: {str(e)}")
-            # Default deduction on error
             state["balance_deduction_amount"] = 50
             state["balance_deduction_reason"] = "AI response processing (default)"
             return state
@@ -533,6 +551,12 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
 
             user_id = str(user.get('_id'))
 
+            # Get AI configuration for this user
+            ai_config = self.db.get_ai_config(user_id)
+            if ai_config:
+                logger.info(
+                    f"AI config loaded for user {user_id}: model={ai_config.get('model')}, creativity={ai_config.get('creativity')}, formality={ai_config.get('formality')}")
+
             # Get conversation history
             conversation_history_result = self.db.get_chat_history(
                 phone_number_id, customer_phone, limit=10
@@ -557,7 +581,7 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                 phone_number_id=phone_number_id,
                 user_id=user_id,
                 business_context=None,
-                conversation_history=serializable_history,  # Now properly including conversation history
+                conversation_history=serializable_history,
                 decision=None,
                 response_message=None,
                 needs_business_context=False,
@@ -566,7 +590,8 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                 balance_deduction_amount=0,
                 balance_deduction_reason="",
                 order_intent=False,
-                order_details=None
+                order_details=None,
+                ai_config=ai_config
             )
 
             # Store conversation history separately to avoid serialization issues
@@ -602,7 +627,8 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
 
                 return None
 
-            logger.info(f"Balance deducted successfully: {deduction_amount} rupiah. New balance: {balance_result['new_balance']}")
+            logger.info(
+                f"Balance deducted successfully: {deduction_amount} rupiah. New balance: {balance_result['new_balance']}")
 
             if response_message:
                 # Send the response
@@ -753,9 +779,12 @@ RESPONSE: [confirmation message to customer]"""
         except Exception as e:
             logger.error(f"Error processing order: {str(e)}")
             # Fallback response
-            if any(indonesian in state.get("message_text", "").lower() for indonesian in ["saya", "mau", "bisa", "ingin"]):
-                state["response_message"] = "Terima kasih atas pesan Anda! Kami telah menerima permintaan Anda dan akan segera menghubungi Anda."
+            if any(indonesian in state.get("message_text", "").lower() for indonesian in
+                   ["saya", "mau", "bisa", "ingin"]):
+                state[
+                    "response_message"] = "Terima kasih atas pesan Anda! Kami telah menerima permintaan Anda dan akan segera menghubungi Anda."
             else:
-                state["response_message"] = "Thank you for your message! We have received your request and will contact you shortly."
+                state[
+                    "response_message"] = "Thank you for your message! We have received your request and will contact you shortly."
             state["order_details"] = "Order request received"
             return state
