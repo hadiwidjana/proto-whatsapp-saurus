@@ -551,6 +551,11 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
 
             user_id = str(user.get('_id'))
 
+            # Check if auto-reply is enabled for this user
+            if not user.get('whatsapp_auto_reply_enabled', False):
+                logger.info(f"Auto-reply is disabled for user {user_id}. Skipping message processing.")
+                return None
+
             # Get AI configuration for this user
             ai_config = self.db.get_ai_config(user_id)
             if ai_config:
