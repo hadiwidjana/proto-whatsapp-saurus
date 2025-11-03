@@ -92,7 +92,7 @@ class WhatsAppAIAgent:
         if ai_config:
             model = ai_config.get('model', self.default_model)
             creativity = ai_config.get('creativity', 2)
-            temperature = creativity / 10.0
+            temperature = self._map_creativity_to_temperature(creativity)
 
         return ChatOpenAI(
             model=model,
@@ -100,18 +100,50 @@ class WhatsAppAIAgent:
             api_key=os.getenv('OPENAI_API_KEY')
         )
 
+    def _map_creativity_to_temperature(self, creativity: int) -> float:
+        """Convert creativity level (0-4) to temperature value
+        0 = Very strict (0.0)
+        1 = Strict (0.2)
+        2 = Balanced (0.5)
+        3 = Creative (0.7)
+        4 = Very creative (0.9)
+        """
+        temperature_map = {
+            0: 0.0,
+            1: 0.2,
+            2: 0.5,
+            3: 0.7,
+            4: 0.9
+        }
+        return temperature_map.get(creativity, 0.5)
+
     def _get_formality_context(self, formality: int) -> str:
-        """Convert formality level (1-3) to context string"""
-        if formality == 1:
-            return "Use casual, friendly language. Be conversational and warm."
-        elif formality == 3:
-            return "Use formal, professional language. Be polite and respectful."
-        else:
-            return "Use balanced, professional yet friendly language."
+        """Convert formality level (0-4) to context string
+        0 = Very formal
+        1 = Formal
+        2 = Balanced
+        3 = Casual
+        4 = Very casual
+        """
+        formality_map = {
+            0: "Use very formal, professional language. Be extremely polite, respectful, and use proper titles. Avoid contractions and colloquialisms.",
+            1: "Use formal, professional language. Be polite and respectful with proper grammar.",
+            2: "Use balanced, professional yet friendly language. Be approachable while maintaining professionalism.",
+            3: "Use casual, friendly language. Be conversational and warm. You can use contractions and informal expressions.",
+            4: "Use very casual, friendly language. Be super conversational, warm, and use emojis when appropriate. Feel free to be playful."
+        }
+        return formality_map.get(formality, "Use balanced, professional yet friendly language.")
 
     def _get_max_tokens_from_reply_length(self, max_reply_length: int) -> int:
-        """Convert maxReplyLength setting to token limit"""
+        """Convert maxReplyLength setting (0-4) to token limit
+        0 = Very short (50 tokens)
+        1 = Short (150 tokens)
+        2 = Medium (300 tokens)
+        3 = Long (500 tokens)
+        4 = Very long (800 tokens)
+        """
         length_map = {
+            0: 50,
             1: 150,
             2: 300,
             3: 500,
