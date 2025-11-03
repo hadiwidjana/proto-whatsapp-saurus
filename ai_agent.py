@@ -428,8 +428,9 @@ Provide a helpful response using the business information above and referencing 
             logger.info(f"Full system prompt being sent to LLM (truncated):\n{system_prompt[:500]}...")
 
             max_tokens = None
-            if ai_config and ai_config.get('maxReplyLength'):
+            if ai_config and ai_config.get('maxReplyLength') is not None:
                 max_tokens = self._get_max_tokens_from_reply_length(ai_config.get('maxReplyLength', 2))
+                logger.info(f"Using max_tokens limit: {max_tokens}")
 
             messages = [
                 SystemMessage(content=system_prompt),
@@ -437,12 +438,22 @@ Provide a helpful response using the business information above and referencing 
             ]
 
             if max_tokens:
-                response = llm.invoke(messages, max_tokens=max_tokens)
+                response = llm.invoke(messages, max_completion_tokens=max_tokens)
             else:
                 response = llm.invoke(messages)
 
-            state["response_message"] = response.content
-            logger.info(f"AI response generated: {response.content[:100]}...")
+            response_text = response.content.strip() if response.content else ""
+
+            if not response_text:
+                logger.warning("LLM returned empty response, using fallback")
+                message_lower = message_text.lower()
+                if any(greeting in message_lower for greeting in ["hi", "hello", "hey", "halo", "hai", "selamat"]):
+                    response_text = "Hello! 👋 Thanks for reaching out. How can I help you today?"
+                else:
+                    response_text = "Thank you for your message! How can I assist you today?"
+
+            state["response_message"] = response_text
+            logger.info(f"AI response generated: {response_text[:100]}...")
             return state
 
         except Exception as e:
