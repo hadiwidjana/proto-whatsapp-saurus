@@ -187,16 +187,7 @@ IMPORTANT: Detect order intent when customers say things like:
 
 Be confident in AI capabilities! Only escalate when:
 - Customer explicitly asks for "human", "agent", "representative", "speak to someone", etc.
-- Specific order issues with order numbers/IDs that need account access
-- Technical problems requiring system access
 - Billing/payment disputes requiring account verification
-- Legal complaints or threats
-
-For order intent detection, look for:
-- Purchase keywords (buy, order, purchase, book, reserve, subscribe)
-- Interest expressions (interested, want, need, would like)
-- Pricing inquiries followed by positive responses
-- Decision-making language (yes, proceed, let's do it, sign me up)
 
 Default to "ai_response" or "process_order" - be helpful and proactive in sales!
 
@@ -514,13 +505,13 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             ai_config = state.get("ai_config")
 
             model_pricing = {
-                "gpt-5": 100,
-                "gpt-5-mini": 20,
-                "gpt-5-nano": 4,
-                "gpt-4.1": 120,
-                "gpt-4o": 200,
-                "gpt-4o-mini": 24,
-                "gpt-3.5-turbo": 15,
+                "gpt-5": 74,
+                "gpt-5-mini": 35,
+                "gpt-5-nano": 27,
+                "gpt-5-pro": 612,
+                "gpt-4.1": 116,
+                "gpt-4.5-preview": 30,
+                "gpt-3.5-turbo": 40,
             }
 
             default_model = self.default_model
