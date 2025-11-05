@@ -706,8 +706,12 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             phone_number_id = state["phone_number_id"]
             business_context = state.get("business_context") or {}
             conversation_history = state.get("conversation_history", [])
+            ai_config = state.get("ai_config")
 
             logger.info(f"Processing order with message: {message_text}")
+
+            # Get LLM instance based on AI config
+            llm = self._get_llm_for_config(ai_config)
 
             # Prepare conversation context
             history_context = ""
@@ -756,7 +760,7 @@ Format your response as:
 ORDER_DETAILS: [extracted details]
 RESPONSE: [confirmation message to customer]"""
 
-            response = self.llm.invoke([
+            response = llm.invoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"Process this order request: {message_text}")
             ])
