@@ -136,20 +136,20 @@ class WhatsAppAIAgent:
 
     def _get_max_tokens_from_reply_length(self, max_reply_length: int) -> str:
         """Convert maxReplyLength setting (0-4) to word count guidance
-        0 = Very short (max 50 words)
-        1 = Short (max 100 words)
-        2 = Medium (max 200 words)
-        3 = Long (max 400 words)
-        4 = Very long (max 800 words)
+        0 = Very short (max 25 words)
+        1 = Short (max 50 words)
+        2 = Medium (max 100 words)
+        3 = Long (max 250 words)
+        4 = Very long (max 500 words)
         """
         length_map = {
-            0: "Keep your response very brief - maximum 50 words. Be concise and direct.",
-            1: "Keep your response short - maximum 100 words. Be clear and to the point.",
-            2: "Keep your response moderate length - maximum 200 words. Provide helpful details while staying focused.",
-            3: "You can provide a detailed response - maximum 400 words. Include comprehensive information.",
-            4: "You can provide a very detailed response - maximum 800 words. Be thorough and explain everything clearly."
+            0: "Keep your response under 25 words.",
+            1: "Keep your response under 50 words.",
+            2: "Keep your response under 100 words.",
+            3: "Keep your response under 250 words.",
+            4: "Keep your response under 500 words."
         }
-        return length_map.get(max_reply_length, "Keep your response moderate length - maximum 200 words.")
+        return length_map.get(max_reply_length, "Keep your response under 100 words.")
 
     def analyze_message(self, state: AgentState) -> AgentState:
         """Analyze the incoming message to determine the best course of action"""
