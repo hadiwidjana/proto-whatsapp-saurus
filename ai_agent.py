@@ -136,18 +136,18 @@ class WhatsAppAIAgent:
 
     def _get_max_tokens_from_reply_length(self, max_reply_length: int) -> int:
         """Convert maxReplyLength setting (0-4) to token limit
-        0 = Very short (500 tokens)
-        1 = Short (1000 tokens)
-        2 = Medium (2500 tokens)
-        3 = Long (5000 tokens)
-        4 = Very long (10000 tokens)
+        0 = Very short (100 tokens)
+        1 = Short (200 tokens)
+        2 = Medium (400 tokens)
+        3 = Long (800 tokens)
+        4 = Very long (1600 tokens)
         """
         length_map = {
-            0: 500,
-            1: 1000,
-            2: 2500,
-            3: 5000,
-            4: 10000
+            0: 100,
+            1: 200,
+            2: 400,
+            3: 800,
+            4: 1600
         }
         return length_map.get(max_reply_length, 300)
 
