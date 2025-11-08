@@ -134,22 +134,22 @@ class WhatsAppAIAgent:
         }
         return formality_map.get(formality, "Use balanced, professional yet friendly language.")
 
-    def _get_max_tokens_from_reply_length(self, max_reply_length: int) -> int:
-        """Convert maxReplyLength setting (0-4) to token limit
-        0 = Very short (100 tokens)
-        1 = Short (200 tokens)
-        2 = Medium (400 tokens)
-        3 = Long (800 tokens)
-        4 = Very long (1600 tokens)
+    def _get_max_tokens_from_reply_length(self, max_reply_length: int) -> str:
+        """Convert maxReplyLength setting (0-4) to word count guidance
+        0 = Very short (max 50 words)
+        1 = Short (max 100 words)
+        2 = Medium (max 200 words)
+        3 = Long (max 400 words)
+        4 = Very long (max 800 words)
         """
         length_map = {
-            0: 100,
-            1: 200,
-            2: 400,
-            3: 800,
-            4: 1600
+            0: "Keep your response very brief - maximum 50 words. Be concise and direct.",
+            1: "Keep your response short - maximum 100 words. Be clear and to the point.",
+            2: "Keep your response moderate length - maximum 200 words. Provide helpful details while staying focused.",
+            3: "You can provide a detailed response - maximum 400 words. Include comprehensive information.",
+            4: "You can provide a very detailed response - maximum 800 words. Be thorough and explain everything clearly."
         }
-        return length_map.get(max_reply_length, 300)
+        return length_map.get(max_reply_length, "Keep your response moderate length - maximum 200 words.")
 
     def analyze_message(self, state: AgentState) -> AgentState:
         """Analyze the incoming message to determine the best course of action"""
@@ -418,20 +418,18 @@ Provide a helpful response using the business information above and referencing 
 
             logger.info(f"Full system prompt being sent to LLM (truncated):\n{system_prompt[:500]}...")
 
-            max_tokens = None
+            length_guidance = ""
             if ai_config and ai_config.get('maxReplyLength') is not None:
-                max_tokens = self._get_max_tokens_from_reply_length(ai_config.get('maxReplyLength', 2))
-                logger.info(f"Using max_tokens limit: {max_tokens}")
+                length_guidance = self._get_max_tokens_from_reply_length(ai_config.get('maxReplyLength', 2))
+                logger.info(f"Using reply length guidance: {length_guidance}")
+                system_prompt += f"\n\nIMPORTANT: {length_guidance}"
 
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=message_text)
             ]
 
-            if max_tokens:
-                response = llm.invoke(messages, max_completion_tokens=max_tokens)
-            else:
-                response = llm.invoke(messages)
+            response = llm.invoke(messages)
 
             response_text = response.content.strip() if response.content else ""
 
