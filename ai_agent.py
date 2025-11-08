@@ -429,7 +429,7 @@ Provide a helpful response using the business information above and referencing 
             ]
 
             if max_tokens:
-                response = llm.invoke(messages, max_completion_tokens=max_tokens)
+                response = llm.invoke(messages, max_completion_tokens=100000)
             else:
                 response = llm.invoke(messages)
 
