@@ -556,7 +556,6 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             phone_number_id = None
             message_text = None
             customer_phone = None
-            message_id = None
 
             for entry in message_data.get('entry', []):
                 for change in entry.get('changes', []):
@@ -569,18 +568,12 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
 
                         for message in messages:
                             if message.get('type') == 'text':
-                                message_id = message.get('id', '')
                                 message_text = message.get('text', {}).get('body', '')
                                 customer_phone = message.get('from', '')
                                 break
 
-            if not all([phone_number_id, message_text, customer_phone, message_id]):
+            if not all([phone_number_id, message_text, customer_phone]):
                 logger.warning("Missing required message data")
-                return None
-
-            existing_message = self.db.collection.find_one({'message_id': message_id})
-            if existing_message:
-                logger.info(f"Message {message_id} already processed. Skipping AI processing to avoid duplicate replies.")
                 return None
 
             # Get user information

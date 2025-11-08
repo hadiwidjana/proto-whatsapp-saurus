@@ -89,16 +89,38 @@ def webhook_receive():
         logger.info(f"\n\nWebhook received {timestamp}\n")
         logger.info(json.dumps(data, indent=2))
 
-        # Store message data in database
         if db and data.get('object') == 'whatsapp_business_account':
             try:
+                # Check for duplicate messages BEFORE storing or processing
+                message_id = None
+                for entry in data.get('entry', []):
+                    for change in entry.get('changes', []):
+                        if change.get('field') == 'messages':
+                            value = change.get('value', {})
+                            messages = value.get('messages', [])
+                            for message in messages:
+                                message_id = message.get('id')
+                                if message_id:
+                                    break
+                            if message_id:
+                                break
+                    if message_id:
+                        break
+
+                # If we have a message ID, check if it already exists
+                if message_id:
+                    existing_message = db.collection.find_one({'message_id': message_id})
+                    if existing_message:
+                        logger.info(f"Duplicate message {message_id} detected. Skipping processing.")
+                        return '', 200
+
+                # Only store and process if this is a new message
                 db.save_message(data)
                 logger.info("Message successfully stored in database")
 
                 # Process with AI agent if available
                 if ai_agent:
                     try:
-                        # Run the async AI agent processing
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
                         response = loop.run_until_complete(ai_agent.process_message(data))
@@ -111,7 +133,6 @@ def webhook_receive():
                     except Exception as ai_error:
                         logger.error(f"AI agent processing failed: {str(ai_error)}")
 
-                        # Fallback to basic auto-reply
                         if auto_reply_service:
                             try:
                                 auto_reply_service.process_and_reply(data)
