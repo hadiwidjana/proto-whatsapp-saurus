@@ -757,6 +757,12 @@ Format your response as:
 ORDER_DETAILS: [extracted details]
 RESPONSE: [confirmation message to customer]"""
 
+            length_guidance = ""
+            if ai_config and ai_config.get('maxReplyLength') is not None:
+                length_guidance = self._get_max_tokens_from_reply_length(ai_config.get('maxReplyLength', 2))
+                logger.info(f"Using reply length guidance: {length_guidance}")
+                system_prompt += f"\n\nIMPORTANT: {length_guidance}"
+
             response = llm.invoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"Process this order request: {message_text}")
