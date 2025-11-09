@@ -395,16 +395,19 @@ Opening Hours:
                 system_prompt = ai_config.get('systemPrompt')
                 system_prompt += f"\n\n{business_info}\n\n{history_context}\n\nCurrent customer message: {message_text}\n\nProvide a helpful response using the business information above."
             else:
+                greeting_instruction = "- For simple greetings, respond warmly and ask how you can help" if not conversation_history else "- Continue the conversation naturally without repeating greetings or introductions"
+
                 system_prompt = f"""You are a helpful customer service AI assistant for {business_name}. 
 
 Your role:
 - Provide friendly, professional responses
 - Be helpful and positive
-- For simple greetings, respond warmly and ask how you can help
+{greeting_instruction}
 - Use the business information provided to answer customer questions accurately
 - If customers ask about products, pricing, payment methods, or how to order, use the specific information provided
 - Always maintain a helpful and conversational tone
 - Use the conversation history to provide contextual responses that reference previous interactions when relevant
+- Do NOT repeat greetings or reintroduce yourself if you've already been talking to this customer
 {language_context}
 {formality_context}
 
@@ -414,7 +417,7 @@ Your role:
 
 Current customer message: {message_text}
 
-Provide a helpful response using the business information above and referencing the conversation history when relevant. Keep it friendly and conversational."""
+Provide a helpful response using the business information above and referencing the conversation history when relevant. Keep it friendly and conversational. If there's conversation history above, continue naturally without greeting again."""
 
             logger.info(f"Full system prompt being sent to LLM (truncated):\n{system_prompt[:500]}...")
 
