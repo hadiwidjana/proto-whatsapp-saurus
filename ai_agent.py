@@ -27,6 +27,9 @@ class AgentState(TypedDict):
     order_intent: bool
     order_details: Optional[str]
     ai_config: Optional[Dict[str, Any]]
+    has_image: bool
+    image_url: Optional[str]
+    image_mime_type: Optional[str]
 
 
 class WhatsAppAIAgent:
@@ -292,6 +295,8 @@ Respond with your decision and reasoning."""
             business_context = state.get("business_context") or {}
             conversation_history = state.get("conversation_history", [])
             ai_config = state.get("ai_config")
+            has_image = state.get("has_image", False)
+            image_url = state.get("image_url")
 
             llm = self._get_llm_for_config(ai_config)
 
@@ -397,6 +402,10 @@ Opening Hours:
             else:
                 greeting_instruction = "- For simple greetings, respond warmly and ask how you can help" if not conversation_history else "- Continue the conversation naturally without repeating greetings or introductions"
 
+                image_instruction = ""
+                if has_image:
+                    image_instruction = "\n- The customer has sent an image. Analyze it carefully and provide relevant feedback, answer questions about it, or help them based on what you see in the image."
+
                 system_prompt = f"""You are a helpful customer service AI assistant for {business_name}. 
 
 Your role:
@@ -410,6 +419,7 @@ Your role:
 - Do NOT repeat greetings or reintroduce yourself if you've already been talking to this customer
 {language_context}
 {formality_context}
+{image_instruction}
 
 {business_info}
 
@@ -427,10 +437,28 @@ Provide a helpful response using the business information above and referencing 
                 logger.info(f"Using reply length guidance: {length_guidance}")
                 system_prompt += f"\n\nIMPORTANT: {length_guidance}"
 
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=message_text)
-            ]
+            if has_image and image_url:
+                logger.info(f"Processing message with image: {image_url}")
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=[
+                        {
+                            "type": "text",
+                            "text": message_text
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url
+                            }
+                        }
+                    ])
+                ]
+            else:
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=message_text)
+                ]
 
             response = llm.invoke(messages)
 
@@ -557,6 +585,9 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
             phone_number_id = None
             message_text = None
             customer_phone = None
+            has_image = False
+            image_url = None
+            image_mime_type = None
 
             for entry in message_data.get('entry', []):
                 for change in entry.get('changes', []):
@@ -568,12 +599,31 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                         phone_number_id = metadata.get('phone_number_id', '')
 
                         for message in messages:
-                            if message.get('type') == 'text':
+                            customer_phone = message.get('from', '')
+                            message_type = message.get('type', '')
+
+                            if message_type == 'text':
                                 message_text = message.get('text', {}).get('body', '')
-                                customer_phone = message.get('from', '')
+                            elif message_type == 'image':
+                                has_image = True
+                                image_data = message.get('image', {})
+                                image_id = image_data.get('id')
+                                image_mime_type = image_data.get('mime_type', 'image/jpeg')
+
+                                if image_id:
+                                    image_url = self.whatsapp_service.get_media_url(image_id)
+                                    logger.info(f"Image message received. Media ID: {image_id}, URL: {image_url}")
+
+                                caption = message.get('image', {}).get('caption', '')
+                                if caption:
+                                    message_text = caption
+                                else:
+                                    message_text = "[Image sent]"
+
+                            if customer_phone:
                                 break
 
-            if not all([phone_number_id, message_text, customer_phone]):
+            if not all([phone_number_id, customer_phone]):
                 logger.warning("Missing required message data")
                 return None
 
@@ -615,7 +665,7 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
 
             # Create initial state with serializable data only
             initial_state = AgentState(
-                message_text=message_text,
+                message_text=message_text or "[No text]",
                 customer_phone=customer_phone,
                 phone_number_id=phone_number_id,
                 user_id=user_id,
@@ -630,7 +680,10 @@ If this is urgent, please don't hesitate to call us directly. Thank you for your
                 balance_deduction_reason="",
                 order_intent=False,
                 order_details=None,
-                ai_config=ai_config
+                ai_config=ai_config,
+                has_image=has_image,
+                image_url=image_url,
+                image_mime_type=image_mime_type
             )
 
             # Store conversation history separately to avoid serialization issues

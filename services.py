@@ -35,6 +35,48 @@ class WhatsAppAPIService:
         self.access_token = os.getenv('WHATSAPP_ACCESS_TOKEN')
         self.base_url = "https://graph.facebook.com/v18.0"
 
+    def get_media_url(self, media_id: str) -> Optional[str]:
+        try:
+            url = f"{self.base_url}/{media_id}"
+
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+
+            response = requests.get(url, headers=headers)
+
+            if response.status_code == 200:
+                data = response.json()
+                media_url = data.get('url')
+                logger.info(f"Media URL retrieved successfully for {media_id}")
+                return media_url
+            else:
+                logger.error(f"Failed to get media URL: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting media URL: {str(e)}")
+            return None
+
+    def download_media(self, media_url: str) -> Optional[bytes]:
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.access_token}'
+            }
+
+            response = requests.get(media_url, headers=headers)
+
+            if response.status_code == 200:
+                logger.info("Media downloaded successfully")
+                return response.content
+            else:
+                logger.error(f"Failed to download media: {response.status_code}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error downloading media: {str(e)}")
+            return None
+
     def send_message(self, phone_number_id: str, to_number: str, message_text: str) -> bool:
         try:
             url = f"{self.base_url}/{phone_number_id}/messages"
@@ -135,17 +177,20 @@ class EmailService:
 
             subject = f"New Order/Reservation Request - {business_name}"
 
+            order_details_html = order_details.replace('\n', '<br>')
+            customer_message_html = customer_message.replace('\n', '<br>')
+
             html_content = f"""
             <h2>New Order/Reservation Request</h2>
             <p><strong>Business:</strong> {business_name}</p>
             <p><strong>Customer Phone:</strong> {customer_phone}</p>
             <p><strong>Order Details:</strong></p>
             <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 10px 0;">
-                {order_details.replace('\n', '<br>')}
+                {order_details_html}
             </div>
             <p><strong>Original Customer Message:</strong></p>
             <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 10px 0;">
-                {customer_message}
+                {customer_message_html}
             </div>
             <p>Please contact the customer to confirm the order/reservation details.</p>
             <hr>
